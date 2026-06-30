@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(python --version)",
+      "PowerShell(py --version)",
+      "PowerShell(pip install Pillow)",
+      "PowerShell(py -m pip install Pillow)",
+      "PowerShell(Start-Process py -ArgumentList \"c:\\\\Users\\\\Tom\\\\python\\\\L2CrestMaker.py\")",
+      "PowerShell(py -c \"import ast; ast.parse\\(open\\(r'c:\\\\Users\\\\Tom\\\\python\\\\L2CrestMaker.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "PowerShell(pip install tkinterdnd2)",
+      "PowerShell(pip show yt-dlp 2>$null)",
+      "PowerShell(ffmpeg -version 2>$null)"
+    ]
+  }
+}

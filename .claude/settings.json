@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Start-Process python \"c:\\\\Users\\\\Tom\\\\python\\\\Audio.py\" -PassThru)",
+      "PowerShell(Start-Sleep -Seconds 2; Add-Type -AssemblyName System.Windows.Forms; $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp = New-Object System.Drawing.Bitmap\\($screen.Width, $screen.Height\\); $g = [System.Drawing.Graphics]::FromImage\\($bmp\\); $g.CopyFromScreen\\($screen.Location, [System.Drawing.Point]::Empty, $screen.Size\\); $bmp.Save\\(\"$env:TEMP\\\\audio_screenshot.png\"\\); $g.Dispose\\(\\); $bmp.Dispose\\(\\); echo \"Screenshot saved\")",
+      "Read(//c/Users/Tom/AppData/Local/Temp/**)",
+      "PowerShell(Stop-Process -Id 29632 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell($python = \\(Get-Command python\\).Source; $WshShell = New-Object -ComObject WScript.Shell; $shortcut = $WshShell.CreateShortcut\\(\"$env:USERPROFILE\\\\Desktop\\\\Descargador de Audio.lnk\"\\); $shortcut.TargetPath = $python; $shortcut.Arguments = \"c:\\\\Users\\\\Tom\\\\python\\\\Audio.py\"; $shortcut.WorkingDirectory = \"c:\\\\Users\\\\Tom\\\\python\"; $shortcut.Description = \"Descargador de Audio\"; $shortcut.Save\\(\\); echo \"Acceso directo creado\")",
+      "PowerShell(pip show pillow)",
+      "PowerShell($shell = New-Object -ComObject Shell.Application; $shell.MinimizeAll\\(\\); Start-Sleep -Seconds 1; Add-Type -AssemblyName System.Windows.Forms; $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp = New-Object System.Drawing.Bitmap\\($screen.Width, $screen.Height\\); $g = [System.Drawing.Graphics]::FromImage\\($bmp\\); $g.CopyFromScreen\\($screen.Location, [System.Drawing.Point]::Empty, $screen.Size\\); $bmp.Save\\(\"$env:TEMP\\\\desktop2.png\"\\); $g.Dispose\\(\\); $bmp.Dispose\\(\\); echo \"ok\")",
+      "PowerShell($shell = New-Object -ComObject Shell.Application; $shell.UndoMinimizeALL\\(\\))",
+      "Read(//c/Users/Tom/Downloads/**)",
+      "PowerShell(pip show tkinterdnd2 2>$null)",
+      "PowerShell(pip show pywin32 2>$null)",
+      "PowerShell(pip install pywin32)"
+    ]
+  }
+}
