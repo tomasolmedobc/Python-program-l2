@@ -8,7 +8,7 @@ Creador de Crests para Lineage 2
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, colorchooser
 from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageEnhance, ImageFilter
-import os, sys, json, ctypes, io, winreg
+import os, sys, json, ctypes, io, winreg, colorsys
 
 try:
     from tkinterdnd2 import TkinterDnD as _TkDnD, DND_FILES as _DND_FILES
@@ -35,6 +35,7 @@ PRESETS_FILE = os.path.join(_HERE, "l2crest_presets.json")
 SESSION_FILE = os.path.join(_HERE, "l2crest_session.json")
 MAX_RECENT   = 8
 ZOOM_MULT    = 40   # factor zoom en popup de resultado
+_split_ratio = 8 / 24  # Feature 8: draggable split ratio (ally fraction)
 
 # ── Paleta de colores ─────────────────────────────────────────────────────────
 BG0 = "#0d1117"   # fondo base
@@ -103,11 +104,11 @@ def _apply_italic(layer: Image.Image, shear_k: float = 0.30) -> Image.Image:
 
 
 def _draw_chars(draw_obj, text: str, font, cx: int, cy: int,
-                spacing_pct: int, fill: tuple):
+                spacing_pct: int, fill: tuple, stroke_w: int = 0):
     if not text:
         return
     chars   = list(text)
-    boxes   = [draw_obj.textbbox((0, 0), c, font=font) for c in chars]
+    boxes   = [draw_obj.textbbox((0, 0), c, font=font, stroke_width=stroke_w) for c in chars]
     widths  = [b[2] - b[0] for b in boxes]
     heights = [b[3] - b[1] for b in boxes]
     avg_w   = sum(widths) / len(widths) if widths else 0
@@ -117,13 +118,35 @@ def _draw_chars(draw_obj, text: str, font, cx: int, cy: int,
     x = cx - total_w // 2
     y = cy - max_h  // 2
     for c, w in zip(chars, widths):
-        draw_obj.text((x, y), c, font=font, fill=fill)
+        draw_obj.text((x, y), c, font=font, fill=fill,
+                      stroke_width=stroke_w, stroke_fill=fill)
         x += w + gap
 
 
 def _hex_to_rgb(hex_color: str) -> tuple:
     h = hex_color.lstrip("#")
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+
+def _make_gradient(w: int, h: int, color1: str, color2: str,
+                   direction: str = "vertical") -> Image.Image:
+    """Linear gradient image (RGB). color1 = top/left, color2 = bottom/right."""
+    r1, g1, b1 = _hex_to_rgb(color1)
+    r2, g2, b2 = _hex_to_rgb(color2)
+    pixels: list = []
+    if direction == "horizontal":
+        for _ in range(h):
+            for x in range(w):
+                t = x / max(w - 1, 1)
+                pixels.append((int(r1*(1-t)+r2*t), int(g1*(1-t)+g2*t), int(b1*(1-t)+b2*t)))
+    else:   # vertical
+        for y in range(h):
+            t = y / max(h - 1, 1)
+            c = (int(r1*(1-t)+r2*t), int(g1*(1-t)+g2*t), int(b1*(1-t)+b2*t))
+            pixels.extend([c] * w)
+    img = Image.new("RGB", (w, h))
+    img.putdata(pixels)
+    return img
 
 
 def _combined_base(src_w: int, src_h: int) -> tuple:
@@ -146,7 +169,7 @@ def _crop_box(src_w: int, src_h: int, target_w: int, target_h: int,
     if align in ("ally", "clan"):
         bx1, by1, bx2, by2 = _combined_base(src_w, src_h)
         bw = bx2 - bx1
-        split = bx1 + bw * ALLY_SIZE[0] / COMBINED_W   # borde ally|clan
+        split = bx1 + bw * _split_ratio   # borde ally|clan (Feature 8: draggable)
         if align == "ally":
             return (bx1, by1, split, by2)
         else:
@@ -230,7 +253,15 @@ def image_to_l2_bmp(src_path: str, dest_path, size: tuple,
                      overlay_path: str = None,
                      text_outline: int = 2,
                      text_opacity: int = 100,
-                     text_rotation: int = 0) -> Image.Image:
+                     text_rotation: int = 0,
+                     color_replacements: list = None,
+                     text_gradient: bool = False,
+                     gradient_color1: str = "#ffffff",
+                     gradient_color2: str = "#000000",
+                     gradient_dir: str = "vertical",
+                     outline_color: str = None,
+                     bold: bool = False,
+                     texts_are_crop_relative: bool = False) -> Image.Image:
     img = Image.open(src_path).convert("RGBA")
 
     # Compositar Fuente 2 (PNG overlay) sobre Fuente 1 antes de recortar
@@ -258,6 +289,21 @@ def image_to_l2_bmp(src_path: str, dest_path, size: tuple,
     if contrast   != 1.0: bg = ImageEnhance.Contrast(bg).enhance(contrast)
     if saturation != 1.0: bg = ImageEnhance.Color(bg).enhance(saturation)
     if hue        != 0:   bg = _apply_hue_shift(bg, hue)
+    if color_replacements:
+        _arr = list(bg.getdata())
+        _new = []
+        for _px in _arr:
+            _rp, _gp, _bp = _px[0], _px[1], _px[2]
+            _ok = False
+            for (_r1, _g1, _b1), (_nr, _ng, _nb), _tol in color_replacements:
+                if abs(_rp-_r1) + abs(_gp-_g1) + abs(_bp-_b1) <= _tol * 3:
+                    _new.append((_nr, _ng, _nb))
+                    _ok = True
+                    break
+            if not _ok:
+                _new.append((_rp, _gp, _bp))
+        bg = Image.new("RGB", bg.size)
+        bg.putdata(_new)
 
     img = bg.resize(size, Image.LANCZOS)
     if sharpen:
@@ -271,28 +317,69 @@ def image_to_l2_bmp(src_path: str, dest_path, size: tuple,
         td         = ImageDraw.Draw(text_layer)
         crop_w, crop_h = x2 - x1, y2 - y1
         r, g, b = _hex_to_rgb(text_color)
-        cr, cg, cb = min(255, (255 - r) | 40), min(255, (255 - g) | 40), min(255, (255 - b) | 40)
+        if outline_color:
+            cr, cg, cb = _hex_to_rgb(outline_color)
+        else:
+            cr, cg, cb = min(255, (255 - r) | 40), min(255, (255 - g) | 40), min(255, (255 - b) | 40)
         outline_step = text_outline
+
+        # Bold: thicken strokes by drawing with a pixel-wide stroke in the
+        # supersampled canvas; after LANCZOS downscale this gives a heavier weight.
+        _bsw = max(1, SUPER_SAMPLE // 4) if bold else 0  # ≈4 px in 256-wide canvas
+
+        # Pre-compute per-text geometry (reused in both passes)
+        _text_geom = []
         for t_str, text_pos, text_size_pct in active_texts:
             font_size = max(4, int(sh * text_size_pct / 100))
             font      = _font_from_path(font_path, font_size)
-            tx = int((text_pos[0] * src_w - x1) / crop_w * sw)
-            ty = int((text_pos[1] * src_h - y1) / crop_h * sh)
-            # Sin clamping: texto render exacto donde indica la cruz, PIL recorta si sale del canvas
+            if texts_are_crop_relative:
+                tx = int(text_pos[0] * sw)
+                ty = int(text_pos[1] * sh)
+            else:
+                tx = int((text_pos[0] * src_w - x1) / crop_w * sw)
+                ty = int((text_pos[1] * src_h - y1) / crop_h * sh)
+            _text_geom.append((t_str, font, tx, ty))
+
+        # Pass 1: outline + shadow (always solid color)
+        for t_str, font, tx, ty in _text_geom:
             if outline_step > 0:
                 for odx, ody in [(-outline_step, 0), (outline_step, 0),
                                   (0, -outline_step), (0, outline_step),
                                   (-outline_step, -outline_step), (outline_step, -outline_step),
                                   (-outline_step,  outline_step), (outline_step,  outline_step)]:
                     _draw_chars(td, t_str, font, tx + odx, ty + ody,
-                                text_spacing_pct, (cr, cg, cb, 220))
+                                text_spacing_pct, (cr, cg, cb, 220), stroke_w=_bsw)
             if shadow:
-                sr, sg, sb = _hex_to_rgb(shadow_color)
+                _sr, _sg, _sb = _hex_to_rgb(shadow_color)
                 _draw_chars(td, t_str, font,
                             tx + shadow_x * SUPER_SAMPLE,
                             ty + shadow_y * SUPER_SAMPLE,
-                            text_spacing_pct, (sr, sg, sb, 200))
-            _draw_chars(td, t_str, font, tx, ty, text_spacing_pct, (r, g, b, 255))
+                            text_spacing_pct, (_sr, _sg, _sb, 200), stroke_w=_bsw)
+
+        # Pass 2: text fill — gradient or solid
+        if text_gradient:
+            fill_layer = Image.new("RGBA", (sw, sh), (0, 0, 0, 0))
+            fd = ImageDraw.Draw(fill_layer)
+            for t_str, font, tx, ty in _text_geom:
+                _draw_chars(fd, t_str, font, tx, ty, text_spacing_pct,
+                            (255, 255, 255, 255), stroke_w=_bsw)
+            _, _, _, _fill_alpha = fill_layer.split()
+            _bbox = _fill_alpha.getbbox()
+            if _bbox:
+                # Gradient spans only the text bounding box → full color range always visible
+                _bx1, _by1, _bx2, _by2 = _bbox
+                _bw, _bh = max(1, _bx2 - _bx1), max(1, _by2 - _by1)
+                _grad_tile = _make_gradient(_bw, _bh, gradient_color1, gradient_color2, gradient_dir)
+                _r2, _g2, _b2 = _hex_to_rgb(gradient_color2)
+                _grad_full = Image.new("RGB", (sw, sh), (_r2, _g2, _b2))
+                _grad_full.paste(_grad_tile, (_bx1, _by1))
+                _grad_rgba = _grad_full.convert("RGBA")
+                _grad_rgba.putalpha(_fill_alpha)
+                text_layer = Image.alpha_composite(text_layer, _grad_rgba)
+        else:
+            for t_str, font, tx, ty in _text_geom:
+                _draw_chars(td, t_str, font, tx, ty, text_spacing_pct,
+                            (r, g, b, 255), stroke_w=_bsw)
         if text_rotation != 0:
             text_layer = text_layer.rotate(-text_rotation, expand=False, resample=Image.BICUBIC)
         if italic:
@@ -427,6 +514,7 @@ class L2CrestApp(_AppBase):
         self.text_pos          = (0.5, 0.5)
         self.text_spacing      = tk.IntVar(value=0)
         self.italic_var        = tk.BooleanVar(value=False)
+        self.bold_var          = tk.BooleanVar(value=False)
         self.text_color        = "#ffffff"
         self.outline_var       = tk.IntVar(value=2)
         self.text_opacity_var  = tk.IntVar(value=100)
@@ -492,6 +580,25 @@ class L2CrestApp(_AppBase):
         self.recent_files = _load_json(RECENT_FILE, [])
         self.presets      = _load_json(PRESETS_FILE, {})
         self.preset_name  = tk.StringVar()
+
+        # Feature 2: color replacements
+        self._color_replacements = []
+        # Feature 5: before/after mode
+        self._before_after_mode = False
+        # Feature 7: export history
+        self._export_history = []
+        HISTORY_MAX = 10
+        # Feature 8: split drag
+        self._split_ratio = 8 / 24
+        self._dragging_split = False
+        # Smart layout for initials
+        self._smart_layout_active = False
+        # Gradient text
+        self.text_gradient_var  = tk.BooleanVar(value=False)
+        self._gradient_color1   = "#e0b84a"   # dorado (top)
+        self._gradient_color2   = "#7b3000"   # marrón oscuro (bottom)
+        self.gradient_dir_var   = tk.StringVar(value="vertical")
+        self._outline_color_val = None        # None = auto-invertido
 
         self._build_ui()
         self.text_var.trace_add("write", lambda *_: self._on_text_change())
@@ -733,10 +840,15 @@ class L2CrestApp(_AppBase):
         self._lbl(r, "°").pack(side="left", padx=(2, 0))
 
         r = self._row(p, pady=(6, 0))
-        self._btn(r, "⟳ Reset", self._reset_adjustments, bg=BG2, fg=TXS).pack(side="left", padx=(0, 12))
+        self._btn(r, "⟳ Reset", self._reset_adjustments, bg=BG2, fg=TXS).pack(side="left", padx=(0, 4))
+        self._btn(r, "✨ Auto", self._auto_adjust, bg=BG2, fg=ACC).pack(side="left", padx=(0, 12))
         self._chk(r, "Nitidez",  self.sharpen_var).pack(side="left", padx=4)
         self._chk(r, "Dithering", self.dither_var).pack(side="left", padx=4)
         self._chk(r, "Exportar PNG", self.export_png_var, cmd=lambda: None).pack(side="left", padx=4)
+
+        r2 = self._row(p, pady=(4, 0))
+        self._repl_btn = self._btn(r2, "Reemplazos (0)", self._show_replacements_popup, bg=BG2, fg=TXS)
+        self._repl_btn.pack(side="left", padx=(0, 4))
 
     # ── Texto / Iniciales ─────────────────────────────────────────────────────
 
@@ -754,9 +866,17 @@ class L2CrestApp(_AppBase):
             relief="flat", bd=4
         ).pack(side="left", padx=(4, 8))
         self._lbl(r, "Tamaño:").pack(side="left")
-        self._scale(r, self.text_size, 10, 100, length=100).pack(side="left")
+        self._scale(r, self.text_size, 10, 200, length=100).pack(side="left")
         self._lbl(r, "%").pack(side="left", padx=(0, 8))
-        self._btn(r, "⊙ Auto", self._auto_fit, bg=BG2, fg=ACC).pack(side="left")
+        self._btn(r, "⊙ Auto", self._auto_fit, bg=BG2, fg=ACC).pack(side="left", padx=(0, 4))
+        self._smart_layout_btn = tk.Button(
+            r, text="📐 Smart", command=self._apply_smart_layout,
+            bg=BG2, fg=TXS, relief="flat", cursor="hand2", bd=0,
+            activebackground="#2d333b", activeforeground="#ffffff",
+            font=("Segoe UI", 9), pady=5, padx=8
+        )
+        self._smart_layout_btn.pack(side="left", padx=(0, 4))
+        self._btn(r, "✕ Layout", self._clear_smart_layout, bg=BG2, fg=TXS).pack(side="left")
 
         ttk.Separator(p, orient="horizontal").pack(fill="x", pady=6)
 
@@ -791,7 +911,14 @@ class L2CrestApp(_AppBase):
             self._color_btns[col] = btn
         self._btn(r, "Custom…", self._pick_custom_color, width=7).pack(side="left", padx=(4, 16))
         self._chk(r, "Cursiva", self.italic_var).pack(side="left")
+        self._chk(r, "Negrita", self.bold_var).pack(side="left", padx=(8, 0))
         self._color_btns["#ffffff"].config(relief="sunken")
+
+        r_auto = self._row(p, pady=(0, 4))
+        self._btn(r_auto, "🎯 Auto (según imagen)", self._auto_text_color,
+                  bg=BG2, fg=ACC).pack(side="left")
+        self._lbl(r_auto, "  analiza color/contraste de la imagen y ajusta texto+contorno+sombra",
+                  fg=TXS).pack(side="left")
 
         # Espaciado
         r = self._row(p)
@@ -849,6 +976,62 @@ class L2CrestApp(_AppBase):
                 font=("Segoe UI", 9),
                 command=lambda a=anchor: self._snap_text_pos(a)
             ).grid(row=i//3, column=i%3, padx=1, pady=1)
+
+        ttk.Separator(p, orient="horizontal").pack(fill="x", pady=(8, 4))
+
+        # ── Degradado de texto ────────────────────────────────────────────────
+        r = self._row(p, pady=(0, 2))
+        self._chk(r, "Degradado", self.text_gradient_var,
+                  cmd=self._refresh_text_preview).pack(side="left", padx=(0, 8))
+        self._grad_btn1 = tk.Button(
+            r, text="  ", width=3, bg=self._gradient_color1,
+            relief="flat", cursor="hand2", font=("Segoe UI", 8),
+            command=self._pick_gradient_color1
+        )
+        self._grad_btn1.pack(side="left", padx=(0, 2))
+        tk.Label(r, text="→", font=("Segoe UI", 10), fg=TXS, bg=BG1).pack(side="left", padx=2)
+        self._grad_btn2 = tk.Button(
+            r, text="  ", width=3, bg=self._gradient_color2,
+            relief="flat", cursor="hand2", font=("Segoe UI", 8),
+            command=self._pick_gradient_color2
+        )
+        self._grad_btn2.pack(side="left", padx=(0, 10))
+        self._lbl(r, "Dir:").pack(side="left")
+        ttk.Combobox(
+            r, textvariable=self.gradient_dir_var,
+            values=["vertical", "horizontal"],
+            state="readonly", width=10,
+            font=("Segoe UI", 9)
+        ).pack(side="left", padx=(4, 0))
+        self.gradient_dir_var.trace_add("write", lambda *_: self._refresh_text_preview())
+
+        # Quick gradient presets
+        r2 = self._row(p, pady=(2, 0))
+        self._lbl(r2, "Estilos:", w=12).pack(side="left")
+        for label, c1, c2 in [
+            ("⚜ Dorado",   "#ffe680", "#7b3000"),
+            ("🔥 Fuego",   "#ff6600", "#cc0000"),
+            ("❄ Hielo",    "#e0f4ff", "#2266aa"),
+            ("🌑 Sombra",  "#ffffff", "#333333"),
+        ]:
+            self._btn(r2, label, lambda a=c1, b=c2: self._apply_gradient_preset(a, b),
+                      bg=BG2, fg=TXS).pack(side="left", padx=(0, 3))
+        self._btn(r2, "🎯 Auto", self._auto_gradient_color,
+                  bg=BG2, fg=ACC).pack(side="left", padx=(8, 0))
+
+        ttk.Separator(p, orient="horizontal").pack(fill="x", pady=(6, 4))
+
+        # ── Color del contorno ────────────────────────────────────────────────
+        r3 = self._row(p, pady=(0, 4))
+        self._lbl(r3, "Color contorno:", w=14).pack(side="left")
+        self._outline_color_btn = tk.Button(
+            r3, text="Auto", width=6,
+            bg=BG2, fg=TXS,
+            relief="flat", cursor="hand2", font=("Segoe UI", 8),
+            command=self._pick_outline_color
+        )
+        self._outline_color_btn.pack(side="left", padx=(4, 6))
+        self._btn(r3, "✕ Reset", self._reset_outline_color, bg=BG2, fg=TXS).pack(side="left")
 
         # Initialize font preview
         self.after_idle(self._update_font_preview)
@@ -908,10 +1091,26 @@ class L2CrestApp(_AppBase):
     # ── Source Preview ────────────────────────────────────────────────────────
 
     def _build_source_preview(self, parent):
+        hdr_frame = tk.Frame(parent, bg=BG0)
+        hdr_frame.pack(fill="x", pady=(0, 4))
         tk.Label(
-            parent, text="IMAGEN FUENTE  ·  ZONAS DE RECORTE",
+            hdr_frame, text="IMAGEN FUENTE  ·  ZONAS DE RECORTE",
             font=("Segoe UI", 8, "bold"), fg=TXS, bg=BG0
-        ).pack(anchor="w", pady=(0, 4))
+        ).pack(side="left")
+        self._ba_btn = tk.Button(
+            hdr_frame, text="◐ Antes/Después",
+            command=self._toggle_before_after,
+            bg=BG2, fg=TXS, relief="flat", cursor="hand2",
+            font=("Segoe UI", 8), padx=6, pady=2
+        )
+        self._ba_btn.pack(side="right")
+        self._reset_split_btn = tk.Button(
+            hdr_frame, text="↔ Reset split",
+            command=self._reset_split,
+            bg=BG2, fg=TXS, relief="flat", cursor="hand2",
+            font=("Segoe UI", 8), padx=6, pady=2
+        )
+        self._reset_split_btn.pack(side="right", padx=(0, 4))
         outer = tk.LabelFrame(
             parent,
             text="  ■ Dorado = Clan (16×12)     ■ Azul = Ally (8×12)  ",
@@ -930,6 +1129,11 @@ class L2CrestApp(_AppBase):
         )
         self.src_canvas.bind("<Button-1>", self._text_drag_start)
         self.src_canvas.bind("<B1-Motion>", self._text_drag_move)
+        self.src_canvas.bind("<Shift-Button-1>", self._pick_color_from_image)
+        self.src_canvas.bind("<Control-Button-1>", self._start_color_replace)
+        self.src_canvas.bind("<Button-3>", self._split_drag_start)
+        self.src_canvas.bind("<B3-Motion>", self._split_drag_move)
+        self.src_canvas.bind("<ButtonRelease-3>", self._split_drag_end)
         self.src_canvas.bind("<Configure>", self._on_src_canvas_resize)
         self.src_canvas.bind("<Left>",  lambda e: self._nudge_text(-0.01, 0.0))
         self.src_canvas.bind("<Right>", lambda e: self._nudge_text( 0.01, 0.0))
@@ -939,6 +1143,8 @@ class L2CrestApp(_AppBase):
         if _HAS_DND:
             self.src_canvas.drop_target_register(_DND_FILES)
             self.src_canvas.dnd_bind('<<Drop>>', self._on_file_drop)
+        tk.Label(parent, text="Shift+click para tomar color  ·  Ctrl+click para reemplazar color  ·  Clic-derecho sobre la línea para mover el split",
+                 bg=BG0, fg=TXS, font=("Segoe UI", 7)).pack(anchor="w")
 
     # ── Result Preview ────────────────────────────────────────────────────────
 
@@ -987,6 +1193,13 @@ class L2CrestApp(_AppBase):
         )
         self.clan_canvas.pack(padx=6, pady=6)
         self.clan_canvas.bind("<Button-1>", lambda _: self._show_zoom_popup("clan"))
+
+        r_pal = tk.Frame(parent, bg=BG0)
+        r_pal.pack(anchor="w", pady=(8, 0))
+        self._btn(r_pal, "🎨 Ver paleta Clan", lambda: self._show_palette("clan"), bg=BG2, fg=ACC).pack(side="left", padx=(0, 4))
+        self._btn(r_pal, "🎨 Ver paleta Ally", lambda: self._show_palette("ally"), bg=BG2, fg=AC2).pack(side="left", padx=(0, 4))
+        self._btn(r_pal, "🎮 Ver en juego", self._show_ingame_preview, bg="#1a2030", fg=AC2).pack(side="left", padx=(0, 4))
+        self._btn(r_pal, "📋 Historial", self._show_history, bg=BG2, fg=TXS).pack(side="left", padx=(0, 4))
 
     def _apply_styles(self):
         style = ttk.Style()
@@ -1124,6 +1337,7 @@ class L2CrestApp(_AppBase):
             "text_pos":  list(self.text_pos),
             "text_spacing":   self.text_spacing.get(),
             "italic":         self.italic_var.get(),
+            "bold":           self.bold_var.get(),
             "text_color":     self.text_color,
             "font":           self.selected_font.get(),
             "shadow":         self.shadow_var.get(),
@@ -1149,6 +1363,7 @@ class L2CrestApp(_AppBase):
         self.text_pos = tuple(s.get("text_pos", s.get("clan_text_pos", [0.5, 0.5])))
         self.text_spacing.set(s.get("text_spacing", 0))
         self.italic_var.set(s.get("italic", False))
+        self.bold_var.set(s.get("bold", False))
         self._set_text_color(s.get("text_color", "#ffffff"))
         if s.get("font") in self.font_names:
             self.selected_font.set(s["font"])
@@ -1239,6 +1454,336 @@ class L2CrestApp(_AppBase):
             self._shadow_btn.config(bg=self.shadow_color)
             self._refresh_text_preview()
 
+
+    # ── Gradient + outline color handlers ────────────────────────────────────
+
+    def _pick_gradient_color1(self):
+        result = colorchooser.askcolor(color=self._gradient_color1, title="Color degradado — arriba/izquierda")
+        if result and result[1]:
+            self._gradient_color1 = result[1]
+            self._grad_btn1.config(bg=self._gradient_color1)
+            self._refresh_text_preview()
+
+    def _pick_gradient_color2(self):
+        result = colorchooser.askcolor(color=self._gradient_color2, title="Color degradado — abajo/derecha")
+        if result and result[1]:
+            self._gradient_color2 = result[1]
+            self._grad_btn2.config(bg=self._gradient_color2)
+            self._refresh_text_preview()
+
+    def _apply_gradient_preset(self, c1: str, c2: str):
+        self._gradient_color1 = c1
+        self._gradient_color2 = c2
+        self._grad_btn1.config(bg=c1)
+        self._grad_btn2.config(bg=c2)
+        self.text_gradient_var.set(True)
+        self._refresh_text_preview()
+
+    def _auto_gradient_color(self):
+        path = self.src_path.get().strip()
+        if not path or not os.path.isfile(path):
+            self.status_var.set("Cargá una imagen primero.")
+            return
+        try:
+            from PIL import ImageStat
+            img = Image.open(path).convert("RGB")
+            bv, cv, sv, hv = (self.brightness_var.get(), self.contrast_var.get(),
+                               self.saturation_var.get(), self.hue_var.get())
+            if bv != 1.0: img = ImageEnhance.Brightness(img).enhance(bv)
+            if cv != 1.0: img = ImageEnhance.Contrast(img).enhance(cv)
+            if sv != 1.0: img = ImageEnhance.Color(img).enhance(sv)
+            if hv != 0:   img = _apply_hue_shift(img, hv)
+
+            sw, sh = img.size
+            bx1, by1, bx2, by2 = _combined_base(sw, sh)
+            bw = bx2 - bx1
+            split = bx1 + bw * self._split_ratio
+            crop = img.crop((int(split), int(by1), int(bx2), int(by2)))
+
+            stat = ImageStat.Stat(crop)
+            cr, cg, cb = stat.mean
+            bg_lum = 0.2126 * cr + 0.7152 * cg + 0.0722 * cb
+            bg_hex = "#{:02x}{:02x}{:02x}".format(int(cr), int(cg), int(cb))
+
+            # Hue del fondo para calcular complementario
+            h, s, _ = colorsys.rgb_to_hsv(cr / 255, cg / 255, cb / 255)
+            comp_h = (h + 0.5) % 1.0
+
+            def _hsv_hex(hh, ss, vv):
+                r2, g2, b2 = colorsys.hsv_to_rgb(hh, ss, vv)
+                return "#{:02x}{:02x}{:02x}".format(int(r2*255), int(g2*255), int(b2*255))
+
+            # Sugerencia 1: contraste máximo (blanco→negro o negro→blanco según fondo)
+            if bg_lum < 128:
+                sug1 = ("#ffffff", "#888888", "Contraste alto")
+            else:
+                sug1 = ("#111111", "#666666", "Contraste alto")
+
+            # Sugerencia 2: complementario al fondo (claro→oscuro en hue opuesto)
+            c_light = _hsv_hex(comp_h, max(0.45, s * 0.6), 0.95)
+            c_dark  = _hsv_hex(comp_h, min(1.0,  s * 1.2), 0.40)
+            sug2 = (c_light, c_dark, "Complementario al fondo")
+
+            # Sugerencia 3: clásico L2 (siempre útil)
+            sug3 = ("#ffe680", "#7b3000", "Dorado clásico")
+
+            # Sugerencia 4: según luminancia del fondo
+            if bg_lum < 80:
+                sug4 = ("#e0f4ff", "#2266aa", "Hielo (fondo oscuro)")
+            elif bg_lum < 160:
+                sug4 = ("#ffffff", "#e0b84a", "Blanco → Dorado")
+            else:
+                sug4 = ("#ff6600", "#cc0000", "Fuego (fondo claro)")
+
+            self._show_gradient_recommendation(bg_hex, [sug1, sug2, sug3, sug4])
+
+        except Exception as e:
+            self.status_var.set(f"Auto degradado error: {e}")
+
+    def _show_gradient_recommendation(self, bg_hex, suggestions):
+        dlg = tk.Toplevel(self, bg=BG0)
+        dlg.title("🎯 Degradado recomendado")
+        dlg.transient(self)
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        card = tk.Frame(dlg, bg=BG1, padx=16, pady=14)
+        card.pack(padx=8, pady=8, fill="both")
+
+        tk.Label(card, text="Degradado según el fondo (zona clan)",
+                 font=("Segoe UI", 10, "bold"), fg=ACC, bg=BG1
+                 ).pack(anchor="w", pady=(0, 8))
+
+        # Fondo detectado
+        r0 = tk.Frame(card, bg=BG1)
+        r0.pack(fill="x", pady=(0, 8))
+        tk.Label(r0, text="Fondo detectado:", font=("Segoe UI", 9), fg=TXS,
+                 bg=BG1, width=17, anchor="w").pack(side="left")
+        tk.Label(r0, text="  ", bg=bg_hex, width=3, relief="solid", bd=1
+                 ).pack(side="left", padx=(0, 6))
+        tk.Label(r0, text=bg_hex, font=("Segoe UI", 9), fg=TXP, bg=BG1
+                 ).pack(side="left")
+
+        tk.Frame(card, bg="#30363d", height=1).pack(fill="x", pady=(0, 8))
+
+        selected = tk.IntVar(value=0)
+        photos = []  # keep refs to avoid GC
+
+        for i, (c1, c2, label) in enumerate(suggestions):
+            row = tk.Frame(card, bg=BG1)
+            row.pack(fill="x", pady=4)
+
+            tk.Radiobutton(row, variable=selected, value=i,
+                           bg=BG1, activebackground=BG1,
+                           selectcolor=BG2, cursor="hand2"
+                           ).pack(side="left", padx=(0, 4))
+
+            # Gradient swatch via PIL
+            swatch = _make_gradient(110, 18, c1, c2, "horizontal")
+            ph = ImageTk.PhotoImage(swatch)
+            photos.append(ph)
+            tk.Label(row, image=ph, bd=1, relief="solid").pack(side="left", padx=(0, 8))
+
+            tk.Label(row, text=f"{c1} → {c2}",
+                     font=("Courier New", 8), fg=TXS, bg=BG1, width=22, anchor="w"
+                     ).pack(side="left")
+            tk.Label(row, text=label,
+                     font=("Segoe UI", 9), fg=TXP, bg=BG1
+                     ).pack(side="left")
+
+        dlg._photos = photos  # prevent GC
+
+        tk.Frame(card, bg="#30363d", height=1).pack(fill="x", pady=10)
+
+        btn_row = tk.Frame(card, bg=BG1)
+        btn_row.pack()
+
+        def _apply():
+            c1, c2, _ = suggestions[selected.get()]
+            self._apply_gradient_preset(c1, c2)
+            self.status_var.set(f"🎯 Degradado aplicado: {c1} → {c2}")
+            dlg.destroy()
+
+        tk.Button(btn_row, text="Aplicar", command=_apply,
+                  bg="#1f4e2e", fg=GRN, relief="flat", cursor="hand2",
+                  font=("Segoe UI", 9, "bold"), padx=18, pady=6
+                  ).pack(side="left", padx=(0, 8))
+        tk.Button(btn_row, text="Cancelar", command=dlg.destroy,
+                  bg=BG2, fg=TXS, relief="flat", cursor="hand2",
+                  font=("Segoe UI", 9), padx=14, pady=6
+                  ).pack(side="left")
+
+        dlg.bind("<Return>", lambda _: _apply())
+        dlg.bind("<Escape>", lambda _: dlg.destroy())
+
+    def _pick_outline_color(self):
+        initial = self._outline_color_val or "#000000"
+        result = colorchooser.askcolor(color=initial, title="Color del contorno")
+        if result and result[1]:
+            self._outline_color_val = result[1]
+            self._outline_color_btn.config(bg=self._outline_color_val, fg="#ffffff", text="Custom")
+            self._refresh_text_preview()
+
+    def _reset_outline_color(self):
+        self._outline_color_val = None
+        self._outline_color_btn.config(bg=BG2, fg=TXS, text="Auto")
+        self._refresh_text_preview()
+
+    def _auto_text_color(self):
+        path = self.src_path.get().strip()
+        if not path or not os.path.isfile(path):
+            self.status_var.set("Cargá una imagen primero.")
+            return
+        try:
+            from PIL import ImageStat
+            img = Image.open(path).convert("RGB")
+            bv, cv, sv, hv = (self.brightness_var.get(), self.contrast_var.get(),
+                               self.saturation_var.get(), self.hue_var.get())
+            if bv != 1.0: img = ImageEnhance.Brightness(img).enhance(bv)
+            if cv != 1.0: img = ImageEnhance.Contrast(img).enhance(cv)
+            if sv != 1.0: img = ImageEnhance.Color(img).enhance(sv)
+            if hv != 0:   img = _apply_hue_shift(img, hv)
+
+            sw, sh = img.size
+            bx1, by1, bx2, by2 = _combined_base(sw, sh)
+            bw = bx2 - bx1
+            split = bx1 + bw * self._split_ratio
+            crop = img.crop((int(split), int(by1), int(bx2), int(by2)))
+
+            stat = ImageStat.Stat(crop)
+            cr, cg, cb = stat.mean
+            bg_lum = 0.2126 * cr + 0.7152 * cg + 0.0722 * cb
+            noise  = sum(stat.stddev) / 3
+
+            def _lum(hexcol):
+                r, g, b = _hex_to_rgb(hexcol)
+                return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+            def _ratio(l1, l2):
+                l1n, l2n = (l1 + 10) / 265, (l2 + 10) / 265
+                hi, lo = max(l1n, l2n), min(l1n, l2n)
+                return hi / lo
+
+            candidates = ["#ffffff", "#000000", "#e0b84a"]
+            ranked = sorted(candidates, key=lambda c: _ratio(bg_lum, _lum(c)), reverse=True)
+            best       = ranked[0]
+            best_ratio = _ratio(bg_lum, _lum(best))
+
+            outline_pick = "#000000" if bg_lum > 128 else "#ffffff"
+            if best == outline_pick:
+                outline_pick = "#ffffff" if outline_pick == "#000000" else "#000000"
+
+            if   noise > 55: outline_px = 5
+            elif noise > 35: outline_px = 4
+            elif noise > 18: outline_px = 3
+            else:             outline_px = 2
+
+            bg_hex = "#{:02x}{:02x}{:02x}".format(int(cr), int(cg), int(cb))
+            self._show_color_recommendation(
+                bg_hex, ranked, best_ratio, _ratio, _lum, bg_lum,
+                outline_pick, outline_px, best_ratio < 2.6, noise
+            )
+            self.status_var.set("🎯 Revisá la recomendación y presioná Aplicar.")
+        except Exception as e:
+            self.status_var.set(f"Auto color error: {e}")
+
+    def _show_color_recommendation(self, bg_hex, ranked, best_ratio,
+                                   _ratio, _lum, bg_lum,
+                                   outline_col, outline_px, shadow, noise):
+        dlg = tk.Toplevel(self, bg=BG0)
+        dlg.title("🎯 Recomendación de color")
+        dlg.transient(self)
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        card = tk.Frame(dlg, bg=BG1, padx=16, pady=14)
+        card.pack(padx=8, pady=8, fill="both")
+
+        tk.Label(card, text="Análisis del fondo (zona clan)",
+                 font=("Segoe UI", 10, "bold"), fg=ACC, bg=BG1
+                 ).pack(anchor="w", pady=(0, 8))
+
+        def _row(label, hexcol, note=""):
+            r = tk.Frame(card, bg=BG1)
+            r.pack(fill="x", pady=3)
+            tk.Label(r, text=label, font=("Segoe UI", 9), fg=TXS, bg=BG1,
+                     width=17, anchor="w").pack(side="left")
+            tk.Label(r, text="  ", bg=hexcol, width=3, relief="solid",
+                     bd=1).pack(side="left", padx=(0, 6))
+            tk.Label(r, text=hexcol + (f"   {note}" if note else ""),
+                     font=("Segoe UI", 9), fg=TXP, bg=BG1).pack(side="left")
+
+        _row("Fondo detectado:", bg_hex)
+
+        tk.Frame(card, bg="#30363d", height=1).pack(fill="x", pady=8)
+
+        tk.Label(card, text="Colores recomendados (por contraste)",
+                 font=("Segoe UI", 9, "bold"), fg=TXS, bg=BG1
+                 ).pack(anchor="w", pady=(0, 6))
+
+        names = {"#ffffff": "Blanco", "#000000": "Negro", "#e0b84a": "Dorado"}
+        for i, col in enumerate(ranked):
+            ratio = _ratio(bg_lum, _lum(col))
+            badge = "  ← mejor" if i == 0 else ""
+            _row(f"  {i+1}. {names.get(col, col)}:", col,
+                 f"contraste {ratio:.1f}:1{badge}")
+
+        tk.Frame(card, bg="#30363d", height=1).pack(fill="x", pady=8)
+
+        tk.Label(card, text="Contorno y sombra sugeridos",
+                 font=("Segoe UI", 9, "bold"), fg=TXS, bg=BG1
+                 ).pack(anchor="w", pady=(0, 6))
+
+        _row("Color contorno:", outline_col, f"grosor {outline_px}px")
+
+        noise_lbl = ("alto — fondo muy texturizado" if noise > 55
+                     else "medio" if noise > 25 else "bajo — fondo liso")
+        for lbl, val in [
+            ("Ruido de fondo:", f"{noise:.0f}  ({noise_lbl})"),
+            ("Sombra:",         "✓ activada" if shadow else "✕ sin sombra"),
+        ]:
+            r2 = tk.Frame(card, bg=BG1)
+            r2.pack(fill="x", pady=3)
+            tk.Label(r2, text=lbl, font=("Segoe UI", 9), fg=TXS, bg=BG1,
+                     width=17, anchor="w").pack(side="left")
+            tk.Label(r2, text=val, font=("Segoe UI", 9), fg=TXP, bg=BG1
+                     ).pack(side="left")
+
+        tk.Frame(card, bg="#30363d", height=1).pack(fill="x", pady=10)
+
+        btn_row = tk.Frame(card, bg=BG1)
+        btn_row.pack()
+
+        best = ranked[0]
+
+        def _apply():
+            self._set_text_color(best)
+            self._outline_color_val = outline_col
+            self._outline_color_btn.config(
+                bg=outline_col,
+                fg="#ffffff" if outline_col == "#000000" else "#111111",
+                text="Auto*"
+            )
+            self.outline_var.set(outline_px)
+            self.shadow_var.set(shadow)
+            self._refresh_text_preview()
+            self.status_var.set(
+                f"🎯 Aplicado: texto {best}  ·  contorno {outline_col} ({outline_px}px)  ·  "
+                f"contraste {best_ratio:.1f}:1  ·  ruido {noise:.0f}"
+            )
+            dlg.destroy()
+
+        tk.Button(btn_row, text="Aplicar", command=_apply,
+                  bg="#1f4e2e", fg=GRN, relief="flat", cursor="hand2",
+                  font=("Segoe UI", 9, "bold"), padx=18, pady=6
+                  ).pack(side="left", padx=(0, 8))
+        tk.Button(btn_row, text="Cancelar", command=dlg.destroy,
+                  bg=BG2, fg=TXS, relief="flat", cursor="hand2",
+                  font=("Segoe UI", 9), padx=14, pady=6
+                  ).pack(side="left")
+
+        dlg.bind("<Return>",  lambda _: _apply())
+        dlg.bind("<Escape>",  lambda _: dlg.destroy())
 
     def _snap_text_pos(self, anchor: str):
         self._push_undo()
@@ -1510,6 +2055,35 @@ class L2CrestApp(_AppBase):
         off_x, off_y, disp_w, disp_h = self._src_disp_rect
         rel_x = max(0.0, min(1.0, (cx - off_x) / disp_w))
         rel_y = max(0.0, min(1.0, (cy - off_y) / disp_h))
+
+        # Constrain drag to the clan zone so text stays within the crest canvas.
+        # Without this, dragging past the right/top/bottom of the combined zone
+        # maps to coordinates outside the 256×192 clan canvas and text disappears.
+        if self._src_img_size:
+            try:
+                src_w, src_h = self._src_img_size
+                bx1, by1, bx2, by2 = _combined_base(src_w, src_h)
+                bw = bx2 - bx1
+                cl_split   = bx1 + bw * _split_ratio
+                cl_x_left  = cl_split / src_w
+                cl_x_right = bx2    / src_w
+                cl_y_top   = by1    / src_h
+                cl_y_bot   = by2    / src_h
+                # Italic shear shifts the top of each character rightward by
+                # ~0.30 × sh (≈57 px) in the actual 256-wide crest canvas.
+                # Subtract that margin from the right limit to prevent the
+                # character top from being clipped off the crest edge.
+                if self.italic_var.get():
+                    sw_c = CLAN_SIZE[0] * SUPER_SAMPLE   # 256
+                    sh_c = ALLY_SIZE[1] * SUPER_SAMPLE   # 192
+                    shear_px = 0.30 * sh_c               # ≈ 57.6
+                    crop_w   = bx2 - cl_split
+                    cl_x_right -= (shear_px / sw_c) * (crop_w / src_w)
+                rel_x = max(cl_x_left, min(cl_x_right, rel_x))
+                rel_y = max(cl_y_top,  min(cl_y_bot,   rel_y))
+            except Exception:
+                pass
+
         self.text_pos = (rel_x, rel_y)
         self._refresh_text_preview()
         if self._drag_preview_after:
@@ -1543,10 +2117,26 @@ class L2CrestApp(_AppBase):
             cv = self.contrast_var.get()
             sv = self.saturation_var.get()
             hv = self.hue_var.get()
-            if bv != 1.0: img = ImageEnhance.Brightness(img).enhance(bv)
-            if cv != 1.0: img = ImageEnhance.Contrast(img).enhance(cv)
-            if sv != 1.0: img = ImageEnhance.Color(img).enhance(sv)
-            if hv != 0:   img = _apply_hue_shift(img.convert("RGB"), hv)
+            if not self._before_after_mode:
+                if bv != 1.0: img = ImageEnhance.Brightness(img).enhance(bv)
+                if cv != 1.0: img = ImageEnhance.Contrast(img).enhance(cv)
+                if sv != 1.0: img = ImageEnhance.Color(img).enhance(sv)
+                if hv != 0:   img = _apply_hue_shift(img.convert("RGB"), hv)
+                if self._color_replacements:
+                    _arr = list(img.convert("RGB").getdata())
+                    _new = []
+                    for _px in _arr:
+                        _rp, _gp, _bp = _px[0], _px[1], _px[2]
+                        _ok = False
+                        for (_r1, _g1, _b1), (_nr, _ng, _nb), _tol in self._color_replacements:
+                            if abs(_rp-_r1) + abs(_gp-_g1) + abs(_bp-_b1) <= _tol * 3:
+                                _new.append((_nr, _ng, _nb))
+                                _ok = True
+                                break
+                        if not _ok:
+                            _new.append((_rp, _gp, _bp))
+                    img = img.convert("RGB")
+                    img.putdata(_new)
 
             pw, ph = self.src_prev_w, self.src_prev_h
             scale  = min(pw / src_w, ph / src_h)
@@ -1589,41 +2179,99 @@ class L2CrestApp(_AppBase):
 
             result_rgba = Image.alpha_composite(bg.convert("RGBA"), overlay)
 
-            r, g, b = _hex_to_rgb(self.text_color)
-            fp = self._current_font_path()
-            sp = self.text_spacing.get()
-            text_layer = Image.new("RGBA", (pw, ph), (0,0,0,0))
-            td = ImageDraw.Draw(text_layer)
-            zt = self.text_var.get().strip()
-            if zt:
-                fs = max(8, int(disp_h * self.text_size.get() / 100))
-                fnt = _font_from_path(fp, fs)
-                tx = off_x + int(self.text_pos[0] * disp_w)
-                ty = off_y + int(self.text_pos[1] * disp_h)
-                if self.shadow_var.get():
-                    sr2, sg2, sb2 = _hex_to_rgb(self.shadow_color)
-                    _draw_chars(td, zt, fnt,
-                                tx + self.shadow_x.get(),
-                                ty + self.shadow_y.get(),
-                                sp, (sr2, sg2, sb2, 180))
-                _draw_chars(td, zt, fnt, tx, ty, sp, (r, g, b, 255))
-            if self.text_rotation_var.get() != 0:
-                text_layer = text_layer.rotate(-self.text_rotation_var.get(), expand=False, resample=Image.BICUBIC)
-            if self.italic_var.get():
-                text_layer = _apply_italic(text_layer)
-            result_rgba = Image.alpha_composite(result_rgba, text_layer)
+            if not self._before_after_mode:
+                r, g, b = _hex_to_rgb(self.text_color)
+                fp = self._current_font_path()
+                sp = self.text_spacing.get()
+                _bold = self.bold_var.get()
+                text_layer = Image.new("RGBA", (pw, ph), (0,0,0,0))
+                td = ImageDraw.Draw(text_layer)
+                zt = self.text_var.get().strip()
+                if zt:
+                    # Build list of (char_str, px_x, px_y, font, bold_stroke)
+                    _items = []
+                    if self._smart_layout_active:
+                        for _ch, (_rx, _ry), _spct in self._get_smart_layout_texts(zt):
+                            _itx = off_x + int(_rx * disp_w)
+                            _ity = off_y + int(_ry * disp_h)
+                            _ifs = max(8, int(disp_h * _spct / 100))
+                            _ibsw = max(1, _ifs // 45) if _bold else 0
+                            _items.append((_ch, _itx, _ity, _font_from_path(fp, _ifs), _ibsw))
+                    else:
+                        _fs  = max(8, int(disp_h * self.text_size.get() / 100))
+                        _itx = off_x + int(self.text_pos[0] * disp_w)
+                        _ity = off_y + int(self.text_pos[1] * disp_h)
+                        _bsw = max(1, _fs // 45) if _bold else 0
+                        _items.append((zt, _itx, _ity, _font_from_path(fp, _fs), _bsw))
 
-            # Crosshair at text anchor position (only when text is set)
-            if self.text_var.get().strip():
-                tx_ch = off_x + int(self.text_pos[0] * disp_w)
-                ty_ch = off_y + int(self.text_pos[1] * disp_h)
-                cross_layer = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
-                cd = ImageDraw.Draw(cross_layer)
-                arm = 10
-                ch_col = (255, 220, 50, 200)
-                cd.line([(tx_ch - arm, ty_ch), (tx_ch + arm, ty_ch)], fill=ch_col, width=1)
-                cd.line([(tx_ch, ty_ch - arm), (tx_ch, ty_ch + arm)], fill=ch_col, width=1)
-                result_rgba = Image.alpha_composite(result_rgba, cross_layer)
+                    for _ch, _itx, _ity, _fnt, _bsw in _items:
+                        if self.shadow_var.get():
+                            sr2, sg2, sb2 = _hex_to_rgb(self.shadow_color)
+                            _draw_chars(td, _ch, _fnt,
+                                        _itx + self.shadow_x.get(),
+                                        _ity + self.shadow_y.get(),
+                                        sp, (sr2, sg2, sb2, 180), stroke_w=_bsw)
+                        if self.text_gradient_var.get():
+                            _fl = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+                            _fd = ImageDraw.Draw(_fl)
+                            _draw_chars(_fd, _ch, _fnt, _itx, _ity, sp,
+                                        (255, 255, 255, 255), stroke_w=_bsw)
+                            _, _, _, _fa = _fl.split()
+                            _bb = _fa.getbbox()
+                            if _bb:
+                                _gx1, _gy1, _gx2, _gy2 = _bb
+                                _gw, _gh = max(1, _gx2-_gx1), max(1, _gy2-_gy1)
+                                _gtile = _make_gradient(_gw, _gh, self._gradient_color1,
+                                                        self._gradient_color2, self.gradient_dir_var.get())
+                                _r2g, _g2g, _b2g = _hex_to_rgb(self._gradient_color2)
+                                _gfull = Image.new("RGB", (pw, ph), (_r2g, _g2g, _b2g))
+                                _gfull.paste(_gtile, (_gx1, _gy1))
+                                _grba = _gfull.convert("RGBA")
+                                _grba.putalpha(_fa)
+                                text_layer = Image.alpha_composite(text_layer, _grba)
+                        else:
+                            _draw_chars(td, _ch, _fnt, _itx, _ity, sp,
+                                        (r, g, b, 255), stroke_w=_bsw)
+                if self.text_rotation_var.get() != 0:
+                    text_layer = text_layer.rotate(-self.text_rotation_var.get(), expand=False, resample=Image.BICUBIC)
+                if self.italic_var.get():
+                    text_layer = _apply_italic(text_layer)
+                result_rgba = Image.alpha_composite(result_rgba, text_layer)
+                if self.text_var.get().strip():
+                    tx_ch = off_x + int(self.text_pos[0] * disp_w)
+                    ty_ch = off_y + int(self.text_pos[1] * disp_h)
+                    cross_layer = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+                    cd = ImageDraw.Draw(cross_layer)
+                    arm = 10
+                    ch_col = (255, 220, 50, 200)
+                    cd.line([(tx_ch - arm, ty_ch), (tx_ch + arm, ty_ch)], fill=ch_col, width=1)
+                    cd.line([(tx_ch, ty_ch - arm), (tx_ch, ty_ch + arm)], fill=ch_col, width=1)
+                    result_rgba = Image.alpha_composite(result_rgba, cross_layer)
+            else:
+                orig_layer = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+                od = ImageDraw.Draw(orig_layer)
+                od.rectangle([off_x+4, off_y+4, off_x+76, off_y+18], fill=(0, 0, 0, 160))
+                od.text((off_x+6, off_y+5), "ORIGINAL", fill=(255, 255, 255, 220))
+                result_rgba = Image.alpha_composite(result_rgba, orig_layer)
+
+            # Línea divisora ally|clan con handle arrastrable (clic derecho)
+            try:
+                _bx1, _by1, _bx2, _by2 = _combined_base(src_w, src_h)
+                _bw = _bx2 - _bx1
+                _split_x_src = _bx1 + _bw * _split_ratio
+                _split_cx = off_x + int(_split_x_src * scale)
+                _top_y = off_y + int(_by1 * scale)
+                _bot_y = off_y + int(_by2 * scale)
+                _handle_y = (_top_y + _bot_y) // 2
+                _sl = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+                _sd = ImageDraw.Draw(_sl)
+                _sd.line([(_split_cx, _top_y), (_split_cx, _bot_y)],
+                         fill=(255, 255, 255, 110), width=2)
+                _sd.ellipse([_split_cx-7, _handle_y-7, _split_cx+7, _handle_y+7],
+                            fill=(255, 255, 255, 160), outline=(230, 184, 74, 220))
+                result_rgba = Image.alpha_composite(result_rgba, _sl)
+            except Exception:
+                pass
 
             self._tk_src = ImageTk.PhotoImage(result_rgba.convert("RGB"))
             self.src_canvas.delete("all")
@@ -1683,28 +2331,114 @@ class L2CrestApp(_AppBase):
             self.status_var.set("Escribí las letras primero.")
             return
         try:
-            fp    = self._current_font_path()
-            sp    = self.text_spacing.get()
-            chars = list(text)
-            dummy = Image.new("RGBA", (1, 1))
-            dd    = ImageDraw.Draw(dummy)
-            ss_w  = CLAN_SIZE[0] * SUPER_SAMPLE
-            ss_h  = CLAN_SIZE[1] * SUPER_SAMPLE
-            best_pct = 10
-            for pct in range(95, 5, -1):
-                font  = _font_from_path(fp, max(4, int(ss_h * pct / 100)))
-                ws    = [dd.textbbox((0,0), c, font=font)[2] for c in chars]
-                avg_w = sum(ws) / len(ws) if ws else 0
-                gap   = int(avg_w * sp / 100)
-                total = sum(ws) + gap * (len(chars) - 1)
-                if total <= ss_w * 0.85:
-                    best_pct = pct
-                    break
-            self.text_size.set(best_pct)
+            n   = len(text)
+            fp  = self._current_font_path()
+            ss  = SUPER_SAMPLE
+            fw, fh = CLAN_SIZE          # 16 × 12 final pixels
+            ss_w, ss_h = fw * ss, fh * ss  # 256 × 192 super-sample
+
+            # ── Medir aspect ratio real del font ──────────────────────────────
+            _test_sz = 128
+            _dummy   = Image.new("RGBA", (1, 1))
+            _dd      = ImageDraw.Draw(_dummy)
+            _ft      = _font_from_path(fp, _test_sz)
+            _ws      = [max(1, _dd.textbbox((0, 0), c, font=_ft)[2]) for c in text]
+            _hs      = [max(1, _dd.textbbox((0, 0), c, font=_ft)[3] -
+                              _dd.textbbox((0, 0), c, font=_ft)[1]) for c in text]
+            avg_char_w = sum(_ws) / len(_ws)
+            avg_char_h = sum(_hs) / len(_hs)
+
+            # ── Tamaño limitado por ALTURA (dejar margen ascendentes/descend.) ─
+            # font_size en super-sample ≈ avg_char_h * (test_sz / avg_char_h) * factor
+            # Queremos avg_char_h_render ≤ ss_h * 0.80
+            h_factor = avg_char_h / _test_sz           # proporción glifo/tamaño
+            size_by_h = int(ss_h * 0.80 / h_factor)   # font_size ss que da 80% alto
+
+            # ── Tamaño limitado por ANCHO ──────────────────────────────────────
+            # Ancho total: n * char_w + (n-1) * gap_mínimo (1px final = ss pixels)
+            # char_w = font_size * (avg_char_w / test_sz)
+            # gap_min = ss   (1 px final entre chars)
+            w_factor = avg_char_w / _test_sz           # proporción ancho/tamaño
+            usable_w = ss_w * 0.90 - (n - 1) * ss     # espacio para todos los chars
+            size_by_w = int(usable_w / (n * w_factor)) if w_factor > 0 else size_by_h
+
+            # ── Tamaño óptimo y conversión a % ────────────────────────────────
+            opt_ss = max(4 * ss, min(size_by_h, size_by_w))
+            opt_pct = max(10, min(95, round(opt_ss / ss_h * 100)))
+
+            # ── Outline automático — inversamente proporcional a n ─────────────
+            # Más chars → contorno más fino para evitar que se peguen
+            outline_map = {1: 5, 2: 3, 3: 2}
+            opt_outline = outline_map.get(n, 2)
+
+            # ── Píxeles finales estimados por char ─────────────────────────────
+            final_px_h = round(opt_ss * h_factor / ss)
+            final_px_w = round(opt_ss * w_factor / ss)
+
+            self.text_size.set(opt_pct)
+            self.outline_var.set(opt_outline)
             self._refresh_text_preview()
-            self.status_var.set(f"Auto: {best_pct}%")
+
+            warn = "  ⚠ puede ser ilegible" if final_px_w < 4 else ""
+            self.status_var.set(
+                f"Auto: {opt_pct}%  ·  contorno {opt_outline}"
+                f"  ·  ≈{final_px_w}×{final_px_h}px/char{warn}"
+            )
         except Exception as e:
             self.status_var.set(f"Error en auto: {e}")
+
+    # ── Smart layout de iniciales ─────────────────────────────────────────────
+
+    def _get_smart_layout_texts(self, text: str) -> list:
+        """
+        Retorna lista de (char, (rel_x, rel_y), size_pct) en coordenadas
+        relativas al crop box (0-1).  Usa geometría óptima según n chars:
+          n=1 → centrado grande
+          n=2 → dos columnas iguales
+          n=3 → primera letra grande izquierda + dos apiladas a la derecha
+        """
+        n = min(len(text), 3)
+        if n == 1:
+            return [(text[0], (0.50, 0.50), 82)]
+        if n == 2:
+            # Dos mitades iguales, centrado vertical
+            return [
+                (text[0], (0.27, 0.50), 72),
+                (text[1], (0.73, 0.50), 72),
+            ]
+        # n == 3 — layout asimétrico: 1 grande + 2 apiladas
+        # Letra principal: ocupa lado izquierdo, altura completa
+        # Dos letras pequeñas: lado derecho, filas superior e inferior
+        #   ┌─────┬─────┐
+        #   │     │  B  │  ← 28% del alto (y≈0.28)
+        #   │  A  ├─────┤
+        #   │     │  C  │  ← 72% del alto (y≈0.72)
+        #   └─────┴─────┘
+        size_big   = 75    # % de sh
+        size_small = 40    # % de sh
+        return [
+            (text[0], (0.27, 0.50), size_big),
+            (text[1], (0.73, 0.28), size_small),
+            (text[2], (0.73, 0.72), size_small),
+        ]
+
+    def _apply_smart_layout(self):
+        text = self.text_var.get().strip()
+        if not text:
+            self.status_var.set("Escribí las letras primero.")
+            return
+        self._smart_layout_active = True
+        self._smart_layout_btn.config(bg="#3a3018", fg=ACC)
+        self._run(save=False)
+        n = min(len(text), 3)
+        layouts = {1: "centrado", 2: "columnas iguales", 3: "1 grande + 2 apiladas"}
+        self.status_var.set(f"Smart layout: {layouts[n]}  ·  Ctrl+P para actualizar")
+
+    def _clear_smart_layout(self):
+        self._smart_layout_active = False
+        self._smart_layout_btn.config(bg=BG2, fg=TXS)
+        self._run(save=False)
+        self.status_var.set("Layout normal restaurado.")
 
     # ── Conversión ────────────────────────────────────────────────────────────
 
@@ -1738,12 +2472,20 @@ class L2CrestApp(_AppBase):
         errors = []
 
         _t = self.text_var.get().strip()
-        _texts = [(_t, self.text_pos, self.text_size.get())] if _t else []
+        if _t and self._smart_layout_active:
+            _texts_clan = self._get_smart_layout_texts(_t)
+            # Ally: solo primera letra grande centrada (8×12 es muy estrecho)
+            _texts_ally = [(_t[0], (0.50, 0.50), 82)]
+            _texts_relative = True
+        else:
+            _texts_clan = [(_t, self.text_pos, self.text_size.get())] if _t else []
+            _texts_ally  = _texts_clan
+            _texts_relative = False
 
-        def _process(dest_path, size, align):
+        def _process(dest_path, size, align, texts, texts_rel):
             img_p = image_to_l2_bmp(
                 src, dest_path, size, align=align,
-                texts=_texts, **common_kw
+                texts=texts, texts_are_crop_relative=texts_rel, **common_kw
             )
             if do_png and dest_path:
                 make_preview(img_p, PREVIEW_MULT).save(
@@ -1754,7 +2496,7 @@ class L2CrestApp(_AppBase):
         clan_dest = clan if save else None
         if clan or not save:
             try:
-                img_p = _process(clan_dest, CLAN_SIZE, "clan")
+                img_p = _process(clan_dest, CLAN_SIZE, "clan", _texts_clan, _texts_relative)
                 prev = make_preview(img_p, PREVIEW_MULT)
                 self._last_clan_img = prev
                 self._tk_clan = ImageTk.PhotoImage(prev)
@@ -1768,7 +2510,7 @@ class L2CrestApp(_AppBase):
         ally_dest = ally if save else None
         if ally or not save:
             try:
-                img_p = _process(ally_dest, ALLY_SIZE, "ally")
+                img_p = _process(ally_dest, ALLY_SIZE, "ally", _texts_ally, _texts_relative)
                 prev = make_preview(img_p, PREVIEW_MULT)
                 self._last_ally_img = prev
                 self._tk_ally = ImageTk.PhotoImage(prev)
@@ -1778,6 +2520,17 @@ class L2CrestApp(_AppBase):
                 self.ally_canvas.create_image(0, 0, anchor="nw", image=self._tk_ally)
             except Exception as e:
                 errors.append(f"Ally: {e}")
+
+        if save and not errors and self._last_clan_img and self._last_ally_img:
+            import datetime
+            self._export_history.insert(0, {
+                "clan":     self._last_clan_img.copy(),
+                "ally":     self._last_ally_img.copy(),
+                "settings": self._get_current_settings(),
+                "src":      self.src_path.get(),
+                "time":     datetime.datetime.now().strftime("%H:%M:%S"),
+            })
+            self._export_history = self._export_history[:10]
 
         if errors:
             messagebox.showerror("Error" if save else "Error en preview", "\n".join(errors))
@@ -1926,6 +2679,7 @@ class L2CrestApp(_AppBase):
             font_path        = self._current_font_path(),
             text_spacing_pct = self.text_spacing.get(),
             italic           = self.italic_var.get(),
+            bold             = self.bold_var.get(),
             brightness       = self.brightness_var.get(),
             contrast         = self.contrast_var.get(),
             saturation       = self.saturation_var.get(),
@@ -1939,9 +2693,15 @@ class L2CrestApp(_AppBase):
             shadow_x         = self.shadow_x.get(),
             shadow_y         = self.shadow_y.get(),
             shadow_color     = self.shadow_color,
-            text_outline     = self.outline_var.get(),
-            text_opacity     = self.text_opacity_var.get(),
-            text_rotation    = self.text_rotation_var.get(),
+            text_outline         = self.outline_var.get(),
+            text_opacity         = self.text_opacity_var.get(),
+            text_rotation        = self.text_rotation_var.get(),
+            color_replacements   = self._color_replacements or None,
+            text_gradient        = self.text_gradient_var.get(),
+            gradient_color1      = self._gradient_color1,
+            gradient_color2      = self._gradient_color2,
+            gradient_dir         = self.gradient_dir_var.get(),
+            outline_color        = self._outline_color_val,
         )
 
     def _save_session(self):
@@ -1976,6 +2736,446 @@ class L2CrestApp(_AppBase):
                 self._update_source_preview(src)
         except Exception:
             pass
+
+    # ── Feature 1: Color picker (Shift+click) ────────────────────────────────
+
+    def _pick_color_from_image(self, event):
+        if not self._src_disp_rect or not self.src_path.get():
+            return
+        off_x, off_y, disp_w, disp_h = self._src_disp_rect
+        src_w, src_h = self._src_img_size
+        px = max(0, min(src_w - 1, int((event.x - off_x) / disp_w * src_w)))
+        py = max(0, min(src_h - 1, int((event.y - off_y) / disp_h * src_h)))
+        try:
+            img = Image.open(self.src_path.get()).convert("RGB")
+            bv, cv, sv, hv = (self.brightness_var.get(), self.contrast_var.get(),
+                              self.saturation_var.get(), self.hue_var.get())
+            if bv != 1.0: img = ImageEnhance.Brightness(img).enhance(bv)
+            if cv != 1.0: img = ImageEnhance.Contrast(img).enhance(cv)
+            if sv != 1.0: img = ImageEnhance.Color(img).enhance(sv)
+            if hv != 0:   img = _apply_hue_shift(img, hv)
+            r, g, b = img.getpixel((px, py))
+            color = f"#{r:02x}{g:02x}{b:02x}"
+            self._set_text_color(color)
+            for btn in self._color_btns.values():
+                btn.config(relief="flat")
+            self.status_var.set(f"Color tomado: {color.upper()}")
+        except Exception as e:
+            self.status_var.set(f"Error al tomar color: {e}")
+
+    # ── Feature 2: Reemplazo de color (Ctrl+click) ───────────────────────────
+
+    def _start_color_replace(self, event):
+        if not self._src_disp_rect or not self.src_path.get():
+            return
+        off_x, off_y, disp_w, disp_h = self._src_disp_rect
+        src_w, src_h = self._src_img_size
+        px = max(0, min(src_w - 1, int((event.x - off_x) / disp_w * src_w)))
+        py = max(0, min(src_h - 1, int((event.y - off_y) / disp_h * src_h)))
+        try:
+            img = Image.open(self.src_path.get()).convert("RGB")
+            src_color = img.getpixel((px, py))
+            hex_src = f"#{src_color[0]:02x}{src_color[1]:02x}{src_color[2]:02x}"
+            result = colorchooser.askcolor(color=hex_src,
+                title=f"Reemplazar {hex_src.upper()} con:")
+            if result and result[0]:
+                new_rgb = tuple(int(c) for c in result[0])
+                self._color_replacements.append((src_color, new_rgb, 30))
+                self._repl_btn.config(
+                    text=f"Reemplazos ({len(self._color_replacements)})",
+                    fg=ACC
+                )
+                self._refresh_text_preview()
+                self._run(save=False)
+        except Exception as e:
+            self.status_var.set(f"Error en reemplazo: {e}")
+
+    def _show_replacements_popup(self):
+        dlg = tk.Toplevel(self, bg=BG0)
+        dlg.title("Reemplazos de color")
+        dlg.transient(self)
+        dlg.resizable(False, False)
+        if not self._color_replacements:
+            tk.Label(dlg,
+                     text="No hay reemplazos activos.\nCtrl+click en la imagen para agregar.",
+                     bg=BG0, fg=TXS, font=("Segoe UI", 9),
+                     padx=20, pady=20).pack()
+            dlg.bind("<Escape>", lambda _: dlg.destroy())
+            return
+        tk.Label(dlg, text="Reemplazos activos — click ✕ para eliminar:",
+                 bg=BG0, fg=TXS, font=("Segoe UI", 8), padx=12, pady=6).pack(anchor="w")
+        for i, (src_c, dst_c, tol) in enumerate(list(self._color_replacements)):
+            src_hex = f"#{src_c[0]:02x}{src_c[1]:02x}{src_c[2]:02x}"
+            dst_hex = f"#{dst_c[0]:02x}{dst_c[1]:02x}{dst_c[2]:02x}"
+            row = tk.Frame(dlg, bg=BG1)
+            row.pack(fill="x", padx=8, pady=2)
+            tk.Label(row, bg=src_hex, width=4, height=1, relief="solid", bd=1).pack(side="left", padx=4)
+            tk.Label(row, text=f"{src_hex.upper()} ->", bg=BG1, fg=TXS, font=("Segoe UI", 9)).pack(side="left")
+            tk.Label(row, bg=dst_hex, width=4, height=1, relief="solid", bd=1).pack(side="left", padx=4)
+            tk.Label(row, text=dst_hex.upper(), bg=BG1, fg=TXP, font=("Segoe UI", 9)).pack(side="left")
+            def _del(idx=i, d=dlg):
+                if idx < len(self._color_replacements):
+                    self._color_replacements.pop(idx)
+                n = len(self._color_replacements)
+                self._repl_btn.config(text=f"Reemplazos ({n})", fg=ACC if n > 0 else TXS)
+                self._refresh_text_preview()
+                self._run(save=False)
+                d.destroy()
+                self._show_replacements_popup()
+            tk.Button(row, text="✕", bg=BG1, fg=RED, relief="flat", cursor="hand2",
+                      font=("Segoe UI", 9), command=_del).pack(side="right", padx=4)
+        r = tk.Frame(dlg, bg=BG0)
+        r.pack(fill="x", padx=8, pady=8)
+        def _clear_all():
+            self._color_replacements.clear()
+            self._repl_btn.config(text="Reemplazos (0)", fg=TXS)
+            self._refresh_text_preview()
+            self._run(save=False)
+            dlg.destroy()
+        self._btn(r, "Limpiar todo", _clear_all, bg="#3d1f1f", fg=RED).pack(side="left")
+        self._btn(r, "Cerrar", dlg.destroy, bg=BG2, fg=TXS).pack(side="right")
+        dlg.bind("<Escape>", lambda _: dlg.destroy())
+
+    # ── Feature 3: Auto-ajuste inteligente ───────────────────────────────────
+
+    def _auto_adjust(self):
+        path = self.src_path.get().strip()
+        if not path or not os.path.isfile(path):
+            self.status_var.set("Cargá una imagen primero.")
+            return
+        try:
+            from PIL import ImageStat
+            img = Image.open(path).convert("RGB")
+            stat = ImageStat.Stat(img)
+            mean   = sum(stat.mean) / 3
+            stddev = sum(stat.stddev) / 3
+            brightness = max(0.7, min(1.8, 128.0 / max(mean, 8)))
+            contrast   = max(0.8, min(1.8, 70.0 / max(stddev, 5)))
+            self.brightness_var.set(round(brightness, 2))
+            self.contrast_var.set(round(contrast, 2))
+            if self.saturation_var.get() == 1.0:
+                self.saturation_var.set(1.15)
+            self._run(save=False)
+            self.status_var.set(
+                f"Auto-ajuste: brillo={brightness:.2f}  contraste={contrast:.2f}")
+        except Exception as e:
+            self.status_var.set(f"Auto-ajuste error: {e}")
+
+    # ── Feature 4: Paleta del BMP ─────────────────────────────────────────────
+
+    def _show_palette(self, zone: str):
+        src = self.src_path.get().strip()
+        if not src or not os.path.isfile(src):
+            messagebox.showinfo("Paleta", "Cargá una imagen fuente primero.")
+            return
+        try:
+            size  = CLAN_SIZE if zone == "clan" else ALLY_SIZE
+            img_p = image_to_l2_bmp(src, None, size, align=zone,
+                                     **self._common_kw())
+        except Exception as e:
+            messagebox.showerror("Paleta", f"Error al generar: {e}")
+            return
+        pal_data    = img_p.getpalette()
+        colors      = [(pal_data[i*3], pal_data[i*3+1], pal_data[i*3+2]) for i in range(256)]
+        used_indices = set(img_p.getdata())
+
+        dlg = tk.Toplevel(self, bg=BG0)
+        dlg.title(f"Paleta {zone.title()} — {len(used_indices)} colores usados")
+        dlg.transient(self)
+        dlg.resizable(False, False)
+        tk.Label(dlg,
+                 text=f"{len(used_indices)}/256 colores usados  ·  Click para usar como color de texto",
+                 bg=BG0, fg=TXS, font=("Segoe UI", 8)).pack(pady=(8, 4))
+        frame = tk.Frame(dlg, bg=BG0)
+        frame.pack(padx=8, pady=4)
+        for i, (r2, g2, b2) in enumerate(colors):
+            col_hex = f"#{r2:02x}{g2:02x}{b2:02x}"
+            used = i in used_indices
+            lbl = tk.Label(frame, bg=col_hex, width=2, height=1,
+                           relief="solid" if used else "flat",
+                           bd=1 if used else 0, cursor="hand2")
+            lbl.grid(row=i // 16, column=i % 16, padx=1, pady=1)
+            lbl.bind("<Button-1>", lambda e, c=col_hex: self._set_text_color(c))
+            lbl.bind("<Enter>",
+                lambda e, c=col_hex, u=used, d=dlg, z=zone:
+                    d.title(f"Paleta {z.title()} — {c.upper()}{'  (usada)' if u else ''}"))
+        tk.Label(dlg, text="Borde = color presente en la imagen",
+                 bg=BG0, fg=TXS, font=("Segoe UI", 7)).pack(pady=(4, 8))
+        dlg.bind("<Escape>", lambda _: dlg.destroy())
+
+    # ── Feature 5: Antes/Después ──────────────────────────────────────────────
+
+    def _toggle_before_after(self):
+        self._before_after_mode = not self._before_after_mode
+        if self._ba_btn:
+            self._ba_btn.config(
+                fg=ACC if self._before_after_mode else TXS,
+                relief="sunken" if self._before_after_mode else "flat",
+            )
+        self._refresh_text_preview()
+
+    # ── Feature 6: Preview en contexto L2 ────────────────────────────────────
+
+    def _show_ingame_preview(self):
+        if self._last_clan_img is None and self._last_ally_img is None:
+            messagebox.showinfo("Preview", "Generá una vista previa primero.")
+            return
+
+        W     = 620
+        TAG_H = 190   # scene with overhead name tag
+        INF_H = 185   # clan info panel
+        H     = TAG_H + INF_H
+
+        # Font loading
+        fnt_sm = fnt_md = fnt_bd = None
+        for face in ("arialbd.ttf", "arial.ttf", "verdana.ttf"):
+            fp = os.path.join(FONTS_DIR, face)
+            if os.path.isfile(fp):
+                try:
+                    fnt_sm = ImageFont.truetype(fp, 11)
+                    fnt_md = ImageFont.truetype(fp, 13)
+                    fnt_bd = ImageFont.truetype(fp, 15)
+                    break
+                except Exception:
+                    pass
+
+        _dm = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        def _tw(text, font):
+            if font is None: return len(text) * 7
+            bb = _dm.textbbox((0, 0), text, font=font)
+            return bb[2] - bb[0]
+        def _th(font):
+            if font is None: return 13
+            bb = _dm.textbbox((0, 0), "Ag", font=font)
+            return bb[3] - bb[1]
+
+        # ── Section 1: Tag sobre personaje ────────────────────────────────────
+        scene = Image.new("RGBA", (W, TAG_H), (0, 0, 0, 255))
+        sd    = ImageDraw.Draw(scene)
+
+        for y in range(TAG_H):
+            t = y / TAG_H
+            sd.line([(0, y), (W, y)],
+                    fill=(int(18+10*t), int(15+8*t), int(11+6*t), 255))
+
+        floor_y = TAG_H - 32
+        sd.rectangle([0, floor_y, W, TAG_H], fill=(26, 22, 17, 255))
+        for xi in range(0, W, 55):
+            sd.line([(xi, floor_y), (xi, TAG_H)], fill=(33, 28, 20, 255))
+        for yi in range(floor_y, TAG_H, 18):
+            sd.line([(0, yi), (W, yi)],           fill=(33, 28, 20, 255))
+
+        # Compute name tag size before drawing character
+        CREST_SCALE = 2
+        ally_tw  = ALLY_SIZE[0] * CREST_SCALE   # 16 px
+        ally_th  = ALLY_SIZE[1] * CREST_SCALE   # 24 px
+        player_name = self.text_var.get().strip() or "PlayerName"
+        title_str   = "[ Bronze III ]"
+        PAD = 9
+
+        title_w = _tw(title_str, fnt_sm)
+        name_rw = ally_tw + 4 + _tw(player_name, fnt_md)
+        name_rh = max(ally_th, _th(fnt_md))
+        tag_w   = max(title_w, name_rw) + PAD * 2
+        tag_h   = _th(fnt_sm) + 4 + name_rh + PAD * 2
+        tag_x   = (W - tag_w) // 2
+        tag_y   = 15
+
+        # Simple character silhouette below tag
+        char_cx  = W // 2
+        body_top = tag_y + tag_h + 18
+        sd.rectangle([char_cx-10, body_top, char_cx+10, floor_y], fill=(28, 24, 18, 255))
+        head_cy = body_top - 14
+        sd.ellipse([char_cx-13, head_cy-13, char_cx+13, head_cy+13], fill=(28, 24, 18, 255))
+
+        # Semi-transparent name tag box
+        ov = Image.new("RGBA", (W, TAG_H), (0, 0, 0, 0))
+        od = ImageDraw.Draw(ov)
+        od.rounded_rectangle([tag_x, tag_y, tag_x+tag_w, tag_y+tag_h],
+                              radius=5, fill=(0, 0, 0, 162))
+        scene = Image.alpha_composite(scene, ov)
+        sd    = ImageDraw.Draw(scene)
+
+        # Title line (cyan, centered)
+        tx = tag_x + (tag_w - title_w) // 2
+        ty = tag_y + PAD
+        sd.text((tx, ty), title_str, font=fnt_sm, fill=(100, 205, 235, 255))
+
+        # Name row: [ally crest] PlayerName — centered within tag box
+        row_y       = ty + _th(fnt_sm) + 4
+        name_total  = ally_tw + 4 + _tw(player_name, fnt_md)
+        row_x       = tag_x + (tag_w - name_total) // 2
+        if self._last_ally_img:
+            try:
+                a_pil  = self._last_ally_img.convert("RGBA").resize(
+                    (ally_tw, ally_th), Image.NEAREST)
+                cy_off = max(0, (name_rh - ally_th) // 2)
+                scene.paste(a_pil, (row_x, row_y + cy_off), a_pil)
+            except Exception:
+                pass
+        sd.text((row_x + ally_tw + 4,
+                 row_y + max(0, (name_rh - _th(fnt_md)) // 2)),
+                player_name, font=fnt_md, fill=(225, 212, 165, 255))
+
+        sd.text((6, TAG_H - 14), "Tag sobre personaje",
+                font=fnt_sm, fill=(60, 54, 40, 255))
+
+        # ── Section 2: Ventana de clan ────────────────────────────────────────
+        SCALE = 6
+        info  = Image.new("RGB", (W, INF_H), (14, 12, 10))
+        id_   = ImageDraw.Draw(info)
+
+        id_.rectangle([16, 8,  W-16, INF_H-8], fill=(26,22,18), outline=(78,68,48), width=2)
+        id_.rectangle([18, 10, W-18, 38],       fill=(34,29,21), outline=(78,68,48), width=1)
+        if fnt_bd:
+            id_.text((36, 13), "Clan Information", font=fnt_bd, fill=(200, 175, 100))
+
+        ax, ay = 46, 50
+        id_.rectangle([ax-4, ay-4, ax+ALLY_SIZE[0]*SCALE+4, ay+ALLY_SIZE[1]*SCALE+4],
+                      fill=(19,17,13), outline=(68,58,38), width=2)
+        if fnt_sm:
+            id_.text((ax, ay+ALLY_SIZE[1]*SCALE+6), "Alianza", font=fnt_sm, fill=(150,130,90))
+        if self._last_ally_img:
+            try:
+                info.paste(self._last_ally_img.convert("RGB").resize(
+                    (ALLY_SIZE[0]*SCALE, ALLY_SIZE[1]*SCALE), Image.NEAREST), (ax, ay))
+            except Exception:
+                pass
+
+        cx2, cy2 = ax + ALLY_SIZE[0]*SCALE + 22, 50
+        id_.rectangle([cx2-4, cy2-4, cx2+CLAN_SIZE[0]*SCALE+4, cy2+CLAN_SIZE[1]*SCALE+4],
+                      fill=(19,17,13), outline=(68,58,38), width=2)
+        if fnt_sm:
+            id_.text((cx2, cy2+CLAN_SIZE[1]*SCALE+6), "Clan", font=fnt_sm, fill=(150,130,90))
+        if self._last_clan_img:
+            try:
+                info.paste(self._last_clan_img.convert("RGB").resize(
+                    (CLAN_SIZE[0]*SCALE, CLAN_SIZE[1]*SCALE), Image.NEAREST), (cx2, cy2))
+            except Exception:
+                pass
+
+        ix = cx2 + CLAN_SIZE[0]*SCALE + 24
+        for ri, (lbl, val) in enumerate([("Nombre:", "___________"),
+                                          ("Alianza:", "___________"),
+                                          ("Nivel:",   "___")]):
+            if fnt_sm:
+                id_.text((ix,      50 + ri*22), lbl, font=fnt_sm, fill=(120,110,80))
+                id_.text((ix + 68, 50 + ri*22), val, font=fnt_sm, fill=(190,170,120))
+        if fnt_sm:
+            id_.text((6, INF_H - 14), "Ventana de información de clan",
+                      font=fnt_sm, fill=(60, 54, 40))
+
+        # ── Compose + popup ───────────────────────────────────────────────────
+        full = Image.new("RGB", (W, H))
+        full.paste(scene.convert("RGB"), (0, 0))
+        full.paste(info, (0, TAG_H))
+        ImageDraw.Draw(full).line([(0, TAG_H), (W, TAG_H)], fill=(45, 40, 30), width=2)
+
+        dlg   = tk.Toplevel(self, bg="#000000")
+        dlg.title("🎮 Preview en contexto L2")
+        dlg.transient(self)
+        dlg.resizable(False, False)
+        photo = ImageTk.PhotoImage(full)
+        lbl   = tk.Label(dlg, image=photo, bg="#000000")
+        lbl.image = photo
+        lbl.pack(padx=2, pady=2)
+        tk.Label(dlg, text="Simulación aproximada  ·  Esc o click para cerrar",
+                 bg="#000000", fg="#555555", font=("Segoe UI", 8)).pack(pady=(0, 4))
+        dlg.bind("<Escape>", lambda _: dlg.destroy())
+        dlg.bind("<Button-1>", lambda _: dlg.destroy())
+
+    # ── Feature 7: Historial de exportados ───────────────────────────────────
+
+    def _show_history(self):
+        if not self._export_history:
+            messagebox.showinfo("Historial", "No hay exportaciones en esta sesión.")
+            return
+        dlg = tk.Toplevel(self, bg=BG0)
+        dlg.title(f"Historial ({len(self._export_history)} exportaciones)")
+        dlg.transient(self)
+        dlg.geometry("520x420")
+        dlg.resizable(False, True)
+        tk.Label(dlg, text="Click en 'Restaurar' para recuperar esa configuración",
+                 bg=BG0, fg=TXS, font=("Segoe UI", 8)).pack(pady=(8, 4))
+        cf = tk.Frame(dlg, bg=BG1)
+        cf.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        vsb = ttk.Scrollbar(cf, orient="vertical")
+        vsb.pack(side="right", fill="y")
+        hcanvas = tk.Canvas(cf, bg=BG1, highlightthickness=0, yscrollcommand=vsb.set)
+        hcanvas.pack(side="left", fill="both", expand=True)
+        vsb.config(command=hcanvas.yview)
+        inner = tk.Frame(hcanvas, bg=BG1)
+        hcanvas.create_window((0, 0), window=inner, anchor="nw")
+        MULT = 8
+        self._hist_photos = []
+        for entry in self._export_history:
+            row_f = tk.Frame(inner, bg=BG2, relief="flat")
+            row_f.pack(fill="x", padx=4, pady=3)
+            thumb_w = (ALLY_SIZE[0] + CLAN_SIZE[0]) * MULT
+            thumb_h = max(ALLY_SIZE[1], CLAN_SIZE[1]) * MULT
+            thumb = Image.new("RGB", (thumb_w, thumb_h), (30, 35, 40))
+            if entry.get("ally"):
+                thumb.paste(entry["ally"].convert("RGB").resize(
+                    (ALLY_SIZE[0]*MULT, ALLY_SIZE[1]*MULT), Image.NEAREST), (0, 0))
+            if entry.get("clan"):
+                thumb.paste(entry["clan"].convert("RGB").resize(
+                    (CLAN_SIZE[0]*MULT, CLAN_SIZE[1]*MULT), Image.NEAREST),
+                    (ALLY_SIZE[0]*MULT, 0))
+            ph = ImageTk.PhotoImage(thumb)
+            self._hist_photos.append(ph)
+            tk.Label(row_f, image=ph, bg=BG2).pack(side="left", padx=6, pady=4)
+            info_f = tk.Frame(row_f, bg=BG2)
+            info_f.pack(side="left", fill="both", expand=True, pady=4)
+            src_name = os.path.basename(entry.get("src", "")) or "—"
+            tk.Label(info_f, text=f"[{entry['time']}]  {src_name}",
+                     bg=BG2, fg=TXP, font=("Segoe UI", 8, "bold"), anchor="w").pack(fill="x")
+            def _restore(e=entry, d=dlg):
+                self._apply_settings(e["settings"])
+                src_p = e.get("src", "")
+                if src_p and os.path.isfile(src_p):
+                    self.src_path.set(src_p)
+                    self._update_source_preview(src_p)
+                self._run(save=False)
+                d.destroy()
+            self._btn(info_f, "↩ Restaurar", _restore,
+                      bg=BG1, fg=ACC, width=10).pack(anchor="w", pady=2)
+        inner.update_idletasks()
+        hcanvas.config(scrollregion=hcanvas.bbox("all"))
+        hcanvas.bind("<MouseWheel>",
+                     lambda e: hcanvas.yview_scroll(-1*(e.delta//120), "units"))
+        dlg.bind("<Escape>", lambda _: dlg.destroy())
+
+    # ── Feature 8: Crop manual con drag del split ─────────────────────────────
+
+    def _split_drag_start(self, event):
+        if not self._src_disp_rect:
+            return
+        off_x, off_y, disp_w, disp_h = self._src_disp_rect
+        split_x = off_x + int(_split_ratio * disp_w)
+        if abs(event.x - split_x) <= 14:
+            self._dragging_split = True
+            self.src_canvas.config(cursor="sb_h_double_arrow")
+
+    def _split_drag_move(self, event):
+        global _split_ratio
+        if not self._dragging_split or not self._src_disp_rect:
+            return
+        off_x, off_y, disp_w, disp_h = self._src_disp_rect
+        ratio = (event.x - off_x) / max(disp_w, 1)
+        _split_ratio = max(0.15, min(0.55, ratio))
+        self._refresh_text_preview()
+
+    def _split_drag_end(self, event):
+        if self._dragging_split:
+            self._dragging_split = False
+            self.src_canvas.config(cursor="")
+            self._run(save=False)
+
+    def _reset_split(self):
+        global _split_ratio
+        _split_ratio = 8 / 24
+        self._refresh_text_preview()
+        self._run(save=False)
 
     def _on_close(self):
         self._save_session()

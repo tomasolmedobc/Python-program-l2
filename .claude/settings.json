@@ -12,7 +12,10 @@
       "Read(//c/Users/Tom/Downloads/**)",
       "PowerShell(pip show tkinterdnd2 2>$null)",
       "PowerShell(pip show pywin32 2>$null)",
-      "PowerShell(pip install pywin32)"
+      "PowerShell(pip install pywin32)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('c:/Users/Tom/python/L2CrestMaker.py', doraise=True\\) or print\\('OK'\\)\")",
+      "PowerShell(python -c \"import py_compile; py_compile.compile\\(r'c:\\\\Users\\\\Tom\\\\python\\\\L2CrestMaker.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(r'c:\\\\Users\\\\Tom\\\\python\\\\L2CrestMaker.py', doraise=True\\); print\\('OK'\\)\")"
     ]
   }
 }
