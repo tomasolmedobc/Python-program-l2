@@ -130,20 +130,38 @@ def _hex_to_rgb(hex_color: str) -> tuple:
 
 def _make_gradient(w: int, h: int, color1: str, color2: str,
                    direction: str = "vertical") -> Image.Image:
-    """Linear gradient image (RGB). color1 = top/left, color2 = bottom/right."""
+    """Linear gradient image (RGB). color1 = top/left/center, color2 = bottom/right/edge."""
     r1, g1, b1 = _hex_to_rgb(color1)
     r2, g2, b2 = _hex_to_rgb(color2)
     pixels: list = []
+    ww, hh = max(w - 1, 1), max(h - 1, 1)
+
+    def _lerp(t):
+        return (int(r1*(1-t)+r2*t), int(g1*(1-t)+g2*t), int(b1*(1-t)+b2*t))
+
     if direction == "horizontal":
         for _ in range(h):
             for x in range(w):
-                t = x / max(w - 1, 1)
-                pixels.append((int(r1*(1-t)+r2*t), int(g1*(1-t)+g2*t), int(b1*(1-t)+b2*t)))
-    else:   # vertical
+                pixels.append(_lerp(x / ww))
+    elif direction == "diagonal ↘":   # top-left → bottom-right
         for y in range(h):
-            t = y / max(h - 1, 1)
-            c = (int(r1*(1-t)+r2*t), int(g1*(1-t)+g2*t), int(b1*(1-t)+b2*t))
-            pixels.extend([c] * w)
+            for x in range(w):
+                pixels.append(_lerp((x / ww + y / hh) / 2))
+    elif direction == "diagonal ↗":   # bottom-left → top-right
+        for y in range(h):
+            for x in range(w):
+                pixels.append(_lerp(((ww - x) / ww + y / hh) / 2))
+    elif direction == "radial":            # color1 at center, color2 at corners
+        cx, cy = ww / 2, hh / 2
+        max_d = max(1.0, (cx**2 + cy**2) ** 0.5)
+        for y in range(h):
+            for x in range(w):
+                t = min(1.0, ((x - cx)**2 + (y - cy)**2) ** 0.5 / max_d)
+                pixels.append(_lerp(t))
+    else:   # vertical (default)
+        for y in range(h):
+            t = y / hh
+            pixels.extend([_lerp(t)] * w)
     img = Image.new("RGB", (w, h))
     img.putdata(pixels)
     return img
@@ -999,8 +1017,8 @@ class L2CrestApp(_AppBase):
         self._lbl(r, "Dir:").pack(side="left")
         ttk.Combobox(
             r, textvariable=self.gradient_dir_var,
-            values=["vertical", "horizontal"],
-            state="readonly", width=10,
+            values=["vertical", "horizontal", "diagonal ↘", "diagonal ↗", "radial"],
+            state="readonly", width=12,
             font=("Segoe UI", 9)
         ).pack(side="left", padx=(4, 0))
         self.gradient_dir_var.trace_add("write", lambda *_: self._refresh_text_preview())
