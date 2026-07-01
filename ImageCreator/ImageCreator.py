@@ -47,6 +47,9 @@ class App:
         self.root.title("L2 Icon Creator — 32×32")
         self.root.resizable(False, False)
         self.root.configure(bg="#1e1e2e")
+        _ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), "iconoL2Maker.ico")
+        if os.path.exists(_ico):
+            self.root.iconbitmap(_ico)
 
         # Image
         self.original_image: Image.Image | None = None

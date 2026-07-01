@@ -52,5 +52,33 @@
     "text_outline": 6,
     "text_opacity": 100,
     "text_rotation": 0
+  },
+  "GG66": {
+    "text": "GG",
+    "text_size": 80,
+    "text_pos": [
+      0.6666666666666666,
+      0.32916666666666666
+    ],
+    "text_spacing": 0,
+    "italic": false,
+    "bold": false,
+    "text_color": "#ffffff",
+    "font": "Russo One",
+    "shadow": true,
+    "shadow_x": 1,
+    "shadow_y": 1,
+    "shadow_color": "#000040",
+    "brightness": 1.0,
+    "contrast": 1.0,
+    "saturation": 1.0,
+    "hue": 180,
+    "sharpen": true,
+    "rotation": 0,
+    "flip_h": false,
+    "flip_v": false,
+    "text_outline": 4,
+    "text_opacity": 100,
+    "text_rotation": 0
   }
 }
