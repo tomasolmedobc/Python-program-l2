@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# Build / packaging
+build/
+dist/
+
+# Editores / SO
+.vscode/
+.idea/
+Thumbs.db

@@ -1,34 +1,55 @@
 {
-  "text": "GG",
-  "text_size": 80,
+  "text": "",
+  "text_size": 91,
   "text_pos": [
-    0.6666666666666666,
-    0.32916666666666666
+    0.5,
+    0.5
   ],
-  "text_spacing": 0,
+  "text_spacing": 13,
   "italic": false,
-  "bold": false,
+  "bold": true,
   "text_color": "#ffffff",
-  "font": "Russo One",
-  "shadow": true,
+  "font": "Impact",
+  "shadow": false,
   "shadow_x": 1,
-  "shadow_y": 1,
-  "shadow_color": "#000040",
+  "shadow_y": 0,
+  "shadow_color": "#000000",
   "brightness": 1.0,
   "contrast": 1.0,
   "saturation": 1.0,
-  "hue": 180,
-  "sharpen": true,
+  "hue": -121,
+  "sharpen": false,
   "rotation": 0,
   "flip_h": false,
   "flip_v": false,
-  "text_outline": 4,
+  "text_outline": 3,
   "text_opacity": 100,
   "text_rotation": 0,
-  "src_path": "D:/Crest Clanes/CrestClan/Lisas/Roja03.jpg",
+  "multi_font": false,
+  "mf_chars": [
+    "L",
+    "C",
+    "D"
+  ],
+  "mf_fonts": [
+    "Gadugi Bold",
+    "Faster Stroker",
+    "Georgia Bold Italic"
+  ],
+  "mf_sizes": [
+    65,
+    63,
+    60
+  ],
+  "mf_offsets_y": [
+    3,
+    2,
+    0
+  ],
+  "src_path": "F:/Organizado/Lisas/Crz22pg.jpg",
   "src_path2": "",
-  "clan_path": "E:\\L2CyA\\Roja03_clan.bmp",
-  "ally_path": "E:\\L2CyA\\Roja03_ally.bmp",
+  "clan_path": "E:\\L2CyA\\Crz22pg_clan.bmp",
+  "ally_path": "E:\\L2CyA\\Crz22pg_ally.bmp",
   "game_path": "",
   "dither": true
 }

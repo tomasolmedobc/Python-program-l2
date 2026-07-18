@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile bot.py spotify_client.py youtube_source.py setup_spotify.py)",
+      "PowerShell(Get-Command ffmpeg -ErrorAction SilentlyContinue)",
+      "PowerShell(winget list --id Gyan.FFmpeg -ErrorAction SilentlyContinue)",
+      "Bash(python bot.py)",
+      "Bash(where ffmpeg *)",
+      "Bash(python -c \"from youtube_source import FFMPEG_EXECUTABLE; print\\(FFMPEG_EXECUTABLE\\)\")",
+      "PowerShell(winget install --id DenoLand.Deno -e --accept-package-agreements --accept-source-agreements)",
+      "Bash(python -c \"from youtube_source import FFMPEG_EXECUTABLE, DENO_EXECUTABLE; print\\(FFMPEG_EXECUTABLE\\); print\\(DENO_EXECUTABLE\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -m yt_dlp --version)",
+      "Bash(python -m yt_dlp --help)",
+      "Bash(python -c \"import yt_dlp, os; print\\(os.path.dirname\\(yt_dlp.__file__\\)\\)\")",
+      "Read(//c/Users/Tom/AppData/Local/Python/pythoncore-3.14-64/Lib/site-packages/yt_dlp/**)",
+      "Bash(python -m py_compile bot.py youtube_source.py)",
+      "PowerShell(Get-CimInstance Win32_Process -Filter \"Name = 'python.exe' or Name = 'pythonw.exe'\")",
+      "PowerShell(Stop-Process -Id 6000,25440 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-CimInstance Win32_Process -Filter \"Name = 'python.exe'\")",
+      "Bash(python -m py_compile bot.py)",
+      "PowerShell(Stop-Process -Id 24964,25396 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Id 7336,13836 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Id 21684,22440 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-NetFirewallProfile | Select-Object Name, Enabled; Write-Output \"---VPN/Adapters---\"; Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Select-Object Name, InterfaceDescription, Status)",
+      "PowerShell(Get-NetIPConfiguration -InterfaceAlias \"Ethernet\")",
+      "Bash(where python *)",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "PowerShell(New-NetFirewallRule -DisplayName \"Python \\(OpBotMusic - allow all\\)\" -Direction Inbound -Program \"C:\\\\Users\\\\Tom\\\\AppData\\\\Local\\\\Python\\\\pythoncore-3.14-64\\\\python.exe\" -Action Allow -Profile Any -Protocol Any -ErrorAction Stop)",
+      "PowerShell(New-NetFirewallRule -DisplayName \"Python \\(OpBotMusic - allow all outbound\\)\" -Direction Outbound -Program \"C:\\\\Users\\\\Tom\\\\AppData\\\\Local\\\\Python\\\\pythoncore-3.14-64\\\\python.exe\" -Action Allow -Profile Any -Protocol Any -ErrorAction Stop)",
+      "PowerShell(Stop-Process -Id 26156,1792,21260,24412 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction SilentlyContinue)"
+    ]
+  }
+}

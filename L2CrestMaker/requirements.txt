@@ -1,0 +1,2 @@
+Pillow>=10.0
+tkinterdnd2>=0.3.0  # opcional: sin esto, la app corre igual pero sin drag&drop de imágenes
