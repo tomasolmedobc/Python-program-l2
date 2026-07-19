@@ -40,6 +40,12 @@ class PresetsMixin:
             "mf_fonts":       [v.get() for v in self.mf_fonts],
             "mf_sizes":       [v.get() for v in self.mf_sizes],
             "mf_offsets_y":   [v.get() for v in self.mf_offsets_y],
+            "hue_zone_enabled": self.hue_zone_enabled_var.get(),
+            "hue_zone_shape":   self.hue_zone_shape_var.get(),
+            "hue_zone_invert":  self.hue_zone_invert_var.get(),
+            "hue_zone_hue":     self.hue_zone_hue_var.get(),
+            "hue_zone_center":  list(self._hue_zone_center),
+            "hue_zone_size":    list(self._hue_zone_size),
         }
 
     def _apply_settings(self, s: dict):
@@ -84,6 +90,12 @@ class PresetsMixin:
         self.outline_var.set(s.get("text_outline", 2))
         self.text_opacity_var.set(s.get("text_opacity", 100))
         self.text_rotation_var.set(s.get("text_rotation", 0))
+        self.hue_zone_enabled_var.set(s.get("hue_zone_enabled", False))
+        self.hue_zone_shape_var.set(s.get("hue_zone_shape", "circle"))
+        self.hue_zone_invert_var.set(s.get("hue_zone_invert", False))
+        self.hue_zone_hue_var.set(s.get("hue_zone_hue", 0))
+        self._hue_zone_center = tuple(s.get("hue_zone_center", [0.5, 0.5]))
+        self._hue_zone_size   = tuple(s.get("hue_zone_size", [0.15, 0.15]))
         self._refresh_text_preview()
 
     def _save_current_preset(self):

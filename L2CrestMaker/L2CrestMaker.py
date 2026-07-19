@@ -310,6 +310,26 @@ def _apply_hue_shift(img: Image.Image, hue_shift: int) -> Image.Image:
     return Image.merge("HSV", (h, s, v)).convert("RGB")
 
 
+def _apply_zone_hue_shift(img: Image.Image, hue_shift: int, shape: str,
+                           cx: float, cy: float, rx: float, ry: float,
+                           invert: bool = False) -> Image.Image:
+    """Feature 9: aplica _apply_hue_shift solo dentro (o, si invert, fuera)
+    de una burbuja (elipse, rx/ry independientes) o rectángulo, centrado en
+    (cx,cy) con semiejes (rx,ry), todo en píxeles de `img`."""
+    if hue_shift == 0 or rx <= 0 or ry <= 0:
+        return img
+    shifted = _apply_hue_shift(img, hue_shift)
+    bg_val, fg_val = (255, 0) if invert else (0, 255)
+    mask = Image.new("L", img.size, bg_val)
+    md = ImageDraw.Draw(mask)
+    box = [cx - rx, cy - ry, cx + rx, cy + ry]
+    if shape == "rect":
+        md.rectangle(box, fill=fg_val)
+    else:
+        md.ellipse(box, fill=fg_val)
+    return Image.composite(shifted, img, mask)
+
+
 def image_to_l2_bmp(src_path: str, dest_path, size: tuple,
                      align: str = "center",
                      texts: list = None,
@@ -337,7 +357,8 @@ def image_to_l2_bmp(src_path: str, dest_path, size: tuple,
                      char_font_paths: list = None,
                      char_size_pcts: list = None,
                      char_y_offsets_pct: list = None,
-                     texts_are_crop_relative: bool = False) -> Image.Image:
+                     texts_are_crop_relative: bool = False,
+                     hue_zone: dict = None) -> Image.Image:
     img = Image.open(src_path).convert("RGBA")
 
     # Compositar Fuente 2 (PNG overlay) sobre Fuente 1 antes de recortar
@@ -365,6 +386,15 @@ def image_to_l2_bmp(src_path: str, dest_path, size: tuple,
     if contrast   != 1.0: bg = ImageEnhance.Contrast(bg).enhance(contrast)
     if saturation != 1.0: bg = ImageEnhance.Color(bg).enhance(saturation)
     if hue        != 0:   bg = _apply_hue_shift(bg, hue)
+    if hue_zone and hue_zone.get("enabled") and hue_zone.get("hue"):
+        hz_cx, hz_cy = hue_zone["center"]
+        hz_rx, hz_ry = hue_zone["size"]
+        bg = _apply_zone_hue_shift(
+            bg, hue_zone["hue"], hue_zone.get("shape", "circle"),
+            hz_cx * src_w - x1, hz_cy * src_h - y1,
+            hz_rx * src_w, hz_ry * src_h,
+            hue_zone.get("invert", False),
+        )
     if color_replacements:
         _arr = list(bg.getdata())
         _new = []
@@ -598,6 +628,7 @@ class L2CrestApp(PresetsMixin, FilesMixin, ExportMixin, EditingMixin, TextMixin,
             pass
         self._fullscreen   = False
         self._resize_after = None
+        self._enforce_min_pane_after = None
         self.src_prev_w    = SOURCE_PREV_W
         self.src_prev_h    = SOURCE_PREV_H
 
@@ -687,6 +718,8 @@ class L2CrestApp(PresetsMixin, FilesMixin, ExportMixin, EditingMixin, TextMixin,
         self._last_clan_img  = None
         self._last_ally_img  = None
         self._text_prev_after = None
+        self._result_disp_mult = PREVIEW_MULT   # escala en pantalla de Ally/Clan; responsive al tamaño de ventana
+        self._results_resize_after = None
 
         # Archivos recientes y presets
         self.recent_files = _load_json(RECENT_FILE, [])
@@ -702,6 +735,14 @@ class L2CrestApp(PresetsMixin, FilesMixin, ExportMixin, EditingMixin, TextMixin,
         HISTORY_MAX = 10
         # Feature 8: split drag
         self._dragging_split = False
+        # Feature 9: zona de tono (hue shift local dentro/fuera de una forma)
+        self.hue_zone_enabled_var = tk.BooleanVar(value=False)
+        self.hue_zone_shape_var   = tk.StringVar(value="circle")
+        self.hue_zone_invert_var  = tk.BooleanVar(value=False)
+        self.hue_zone_hue_var     = tk.IntVar(value=0)
+        self._hue_zone_center     = (0.5, 0.5)
+        self._hue_zone_size       = (0.15, 0.15)
+        self._dragging_hue_zone   = None   # None | "move" | "resize"
         # Smart layout for initials
         self._smart_layout_active = False
         # Gradient text
@@ -753,6 +794,14 @@ class L2CrestApp(PresetsMixin, FilesMixin, ExportMixin, EditingMixin, TextMixin,
             gradient_color2      = self._gradient_color2,
             gradient_dir         = self.gradient_dir_var.get(),
             outline_color        = self._outline_color_val,
+            hue_zone             = dict(
+                enabled = self.hue_zone_enabled_var.get(),
+                shape   = self.hue_zone_shape_var.get(),
+                invert  = self.hue_zone_invert_var.get(),
+                hue     = self.hue_zone_hue_var.get(),
+                center  = self._hue_zone_center,
+                size    = self._hue_zone_size,
+            ),
         )
 
     def _save_session(self):

@@ -44,7 +44,6 @@ class ExportMixin:
         common_kw = self._common_kw()
         common_kw["overlay_path"] = self.src_path2.get().strip() or None
         do_png = self.export_png_var.get() and save
-        bg_mode = self.preview_bg_var.get()
         errors = []
 
         _t, _cfp, _csp, _cyo = self._mf_export_texts()
@@ -76,13 +75,7 @@ class ExportMixin:
         if clan or not save:
             try:
                 img_p = _process(clan_dest, CLAN_SIZE, "clan", _texts_clan, _texts_relative)
-                prev = make_preview(img_p, PREVIEW_MULT)
-                self._last_clan_img = prev
-                self._tk_clan = ImageTk.PhotoImage(prev)
-                self.clan_canvas.delete("all")
-                if bg_mode == "checker":
-                    self._draw_checker(self.clan_canvas, CLAN_SIZE[0]*PREVIEW_MULT, CLAN_SIZE[1]*PREVIEW_MULT)
-                self.clan_canvas.create_image(0, 0, anchor="nw", image=self._tk_clan)
+                self._last_clan_img = make_preview(img_p, PREVIEW_MULT)
             except Exception as e:
                 errors.append(f"Clan: {e}")
 
@@ -90,15 +83,11 @@ class ExportMixin:
         if ally or not save:
             try:
                 img_p = _process(ally_dest, ALLY_SIZE, "ally", _texts_ally, _texts_relative)
-                prev = make_preview(img_p, PREVIEW_MULT)
-                self._last_ally_img = prev
-                self._tk_ally = ImageTk.PhotoImage(prev)
-                self.ally_canvas.delete("all")
-                if bg_mode == "checker":
-                    self._draw_checker(self.ally_canvas, ALLY_SIZE[0]*PREVIEW_MULT, ALLY_SIZE[1]*PREVIEW_MULT)
-                self.ally_canvas.create_image(0, 0, anchor="nw", image=self._tk_ally)
+                self._last_ally_img = make_preview(img_p, PREVIEW_MULT)
             except Exception as e:
                 errors.append(f"Ally: {e}")
+
+        self._redraw_result_canvases()
 
         if save and not errors and self._last_clan_img and self._last_ally_img:
             self._export_history.insert(0, {
@@ -121,7 +110,7 @@ class ExportMixin:
                 ([f"(+ PNG exportado)"] if do_png else [])
             ))
         else:
-            self.status_var.set("Vista previa lista  |  Ctrl+P = preview  |  Ctrl+Enter = convertir")
+            self.status_var.set("Vista previa lista  |  Ctrl+P = preview  |  Ctrl+Enter = convertir  |  Ctrl+Z/Y = deshacer/rehacer")
 
     # ── Batch processing ──────────────────────────────────────────────────────
 

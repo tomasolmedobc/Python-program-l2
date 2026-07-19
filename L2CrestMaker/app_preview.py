@@ -8,10 +8,10 @@ from tkinter import messagebox
 from PIL import Image, ImageDraw, ImageEnhance, ImageTk, ImageFont
 
 from L2CrestMaker import (
-    _apply_hue_shift, _hex_to_rgb, _combined_base, _crop_box, _make_gradient,
-    _font_from_path, _per_char_fonts, _draw_chars, _apply_italic,
+    _apply_hue_shift, _apply_zone_hue_shift, _hex_to_rgb, _combined_base, _crop_box,
+    _make_gradient, _font_from_path, _per_char_fonts, _draw_chars, _apply_italic,
     _copy_image_to_clipboard, _log_error, image_to_l2_bmp,
-    CLAN_SIZE, ALLY_SIZE, SUPER_SAMPLE, PREVIEW_MULT, ZOOM_MULT, FONTS_DIR,
+    CLAN_SIZE, ALLY_SIZE, SUPER_SAMPLE, ZOOM_MULT, FONTS_DIR,
     BG0, ACC, TXS,
 )
 import L2CrestMaker as _core  # _split_ratio es un global mutable compartido entre módulos
@@ -51,6 +51,14 @@ class PreviewMixin:
                 if cv != 1.0: img = ImageEnhance.Contrast(img).enhance(cv)
                 if sv != 1.0: img = ImageEnhance.Color(img).enhance(sv)
                 if hv != 0:   img = _apply_hue_shift(img.convert("RGB"), hv)
+                if self.hue_zone_enabled_var.get() and self.hue_zone_hue_var.get() != 0:
+                    img = _apply_zone_hue_shift(
+                        img.convert("RGB"), self.hue_zone_hue_var.get(),
+                        self.hue_zone_shape_var.get(),
+                        self._hue_zone_center[0] * src_w, self._hue_zone_center[1] * src_h,
+                        self._hue_zone_size[0] * src_w, self._hue_zone_size[1] * src_h,
+                        self.hue_zone_invert_var.get(),
+                    )
                 if self._color_replacements:
                     _arr = list(img.convert("RGB").getdata())
                     _new = []
@@ -105,6 +113,20 @@ class PreviewMixin:
                 ov.rectangle([off_x, cmb_y2+1, off_x+disp_w-1, off_y+disp_h-1], fill=dark)
             ov.rectangle(clan_box, outline=(230, 184, 74, 255), width=2)
             ov.rectangle(ally_box, outline=(88, 166, 255, 255), width=2)
+
+            if self.hue_zone_enabled_var.get():
+                hz_cx = off_x + self._hue_zone_center[0] * disp_w
+                hz_cy = off_y + self._hue_zone_center[1] * disp_h
+                hz_rx = self._hue_zone_size[0] * disp_w
+                hz_ry = self._hue_zone_size[1] * disp_h
+                hz_box = [hz_cx - hz_rx, hz_cy - hz_ry, hz_cx + hz_rx, hz_cy + hz_ry]
+                hz_color = (255, 110, 240, 255)
+                if self.hue_zone_shape_var.get() == "rect":
+                    ov.rectangle(hz_box, outline=hz_color, width=2)
+                else:
+                    ov.ellipse(hz_box, outline=hz_color, width=2)
+                hx, hy = hz_cx + hz_rx, hz_cy + hz_ry
+                ov.rectangle([hx-4, hy-4, hx+4, hy+4], fill=hz_color)
 
             result_rgba = Image.alpha_composite(bg.convert("RGBA"), overlay)
 
@@ -249,15 +271,18 @@ class PreviewMixin:
 
     def _redraw_result_canvases(self):
         bg = self.preview_bg_var.get()
+        mult = self._result_disp_mult
         for canvas, size, img, tkimg_attr in [
             (self.clan_canvas, CLAN_SIZE, self._last_clan_img, "_tk_clan"),
             (self.ally_canvas, ALLY_SIZE, self._last_ally_img, "_tk_ally"),
         ]:
+            w, h = max(1, int(size[0]*mult)), max(1, int(size[1]*mult))
             canvas.delete("all")
             if bg == "checker":
-                self._draw_checker(canvas, size[0]*PREVIEW_MULT, size[1]*PREVIEW_MULT)
+                self._draw_checker(canvas, w, h)
             if img is not None:
-                tkimg = ImageTk.PhotoImage(img)
+                disp = img if img.size == (w, h) else img.resize((w, h), Image.NEAREST)
+                tkimg = ImageTk.PhotoImage(disp)
                 setattr(self, tkimg_attr, tkimg)
                 canvas.create_image(0, 0, anchor="nw", image=tkimg)
 

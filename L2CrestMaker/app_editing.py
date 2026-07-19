@@ -205,3 +205,74 @@ class EditingMixin:
         _core._split_ratio = 8 / 24
         self._refresh_text_preview()
         self._run(save=False)
+
+    # ── Feature 9: zona de tono (burbuja/rectángulo, drag + resize) ──────────
+
+    def _hue_zone_geometry_px(self):
+        """(cx, cy, rx, ry) de la zona en píxeles del canvas fuente."""
+        if not self._src_disp_rect:
+            return None
+        off_x, off_y, disp_w, disp_h = self._src_disp_rect
+        cx = off_x + self._hue_zone_center[0] * disp_w
+        cy = off_y + self._hue_zone_center[1] * disp_h
+        rx = self._hue_zone_size[0] * disp_w
+        ry = self._hue_zone_size[1] * disp_h
+        return cx, cy, rx, ry
+
+    def _hue_zone_hit_test(self, x, y):
+        geo = self._hue_zone_geometry_px()
+        if not geo:
+            return None
+        cx, cy, rx, ry = geo
+        hx, hy = cx + rx, cy + ry
+        if abs(x - hx) <= 8 and abs(y - hy) <= 8:
+            return "resize"
+        if self.hue_zone_shape_var.get() == "rect":
+            inside = (cx - rx) <= x <= (cx + rx) and (cy - ry) <= y <= (cy + ry)
+        else:
+            inside = rx > 0 and ry > 0 and ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1.0
+        return "move" if inside else None
+
+    def _on_canvas_button1(self, event):
+        mode = self._hue_zone_hit_test(event.x, event.y) if self.hue_zone_enabled_var.get() else None
+        if mode:
+            self._push_undo()
+            self._dragging_hue_zone = mode
+            self.src_canvas.config(cursor="fleur" if mode == "move" else "sizing")
+        else:
+            self._dragging_hue_zone = None
+            self._text_drag_start(event)
+
+    def _on_canvas_motion1(self, event):
+        if self._dragging_hue_zone:
+            self._update_hue_zone_from_canvas(event.x, event.y)
+        else:
+            self._text_drag_move(event)
+
+    def _on_canvas_release1(self, _event=None):
+        if self._dragging_hue_zone:
+            self._dragging_hue_zone = None
+            self.src_canvas.config(cursor="")
+            self._run(save=False)
+
+    def _update_hue_zone_from_canvas(self, x, y):
+        if not self._src_disp_rect:
+            return
+        off_x, off_y, disp_w, disp_h = self._src_disp_rect
+        if self._dragging_hue_zone == "move":
+            rel_x = max(0.0, min(1.0, (x - off_x) / disp_w))
+            rel_y = max(0.0, min(1.0, (y - off_y) / disp_h))
+            self._hue_zone_center = (rel_x, rel_y)
+        else:  # resize
+            cx = off_x + self._hue_zone_center[0] * disp_w
+            cy = off_y + self._hue_zone_center[1] * disp_h
+            rx = max(6, x - cx) / disp_w
+            ry = max(6, y - cy) / disp_h
+            self._hue_zone_size = (min(1.0, rx), min(1.0, ry))
+        self._refresh_text_preview()
+
+    def _reset_hue_zone(self):
+        self._hue_zone_center = (0.5, 0.5)
+        self._hue_zone_size = (0.15, 0.15)
+        self._refresh_text_preview()
+        self._run(save=False)

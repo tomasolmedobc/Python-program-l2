@@ -8,7 +8,7 @@ from tkinter import ttk
 from L2CrestMaker import (
     _HAS_DND, _DND_FILES,
     BG0, BG1, BG2, ACC, AC2, TXP, TXS, GRN, RED,
-    SOURCE_PREV_W, SOURCE_PREV_H, CLAN_SIZE, ALLY_SIZE, PREVIEW_MULT,
+    SOURCE_PREV_W, SOURCE_PREV_H, CLAN_SIZE, ALLY_SIZE, PREVIEW_MULT, COMBINED_W,
 )
 
 
@@ -17,15 +17,18 @@ class UIBuilderMixin:
     # ── Construcción UI ───────────────────────────────────────────────────────
 
     def _build_ui(self):
-        self.columnconfigure(0, weight=0)
-        self.columnconfigure(1, weight=1)
+        self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
+        # Panel principal con divisor arrastrable entre izquierda y derecha
+        self._main_pane = ttk.PanedWindow(self, orient="horizontal")
+        self._main_pane.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+
         # ── Columna izquierda: scrollable ────────────────────────────────────
-        left_outer = tk.Frame(self, bg=BG0)
-        left_outer.grid(row=0, column=0, sticky="nsew", padx=(12, 6), pady=12)
+        self._left_outer = left_outer = tk.Frame(self._main_pane, bg=BG0)
         left_outer.rowconfigure(0, weight=1)
         left_outer.columnconfigure(0, weight=1)
+        left_outer.bind("<Configure>", self._enforce_min_left_pane)
 
         self._left_canvas = tk.Canvas(left_outer, bg=BG0, highlightthickness=0)
         left_vsb = tk.Scrollbar(
@@ -51,13 +54,16 @@ class UIBuilderMixin:
         left_outer.bind("<Leave>", lambda _: self.unbind_all("<MouseWheel>"))
 
         # ── Columna derecha ───────────────────────────────────────────────────
-        right = tk.Frame(self, bg=BG0)
-        right.grid(row=0, column=1, sticky="nsew", padx=(6, 12), pady=12)
+        right = tk.Frame(self._main_pane, bg=BG0)
+
+        self._main_pane.add(left_outer, weight=0)
+        self._main_pane.add(right, weight=1)
 
         self._build_header(left)
         self._build_files_card(left)
         self._build_transform_card(left)
         self._build_adjust_card(left)
+        self._build_hue_zone_card(left)
         self._build_text_card(left)
         self._build_presets_card(left)
         self._build_actions_card(left)
@@ -67,35 +73,105 @@ class UIBuilderMixin:
 
         # Status bar
         self.status_var = tk.StringVar(
-            value="Listo.  |  Ctrl+P = preview  |  Ctrl+Enter = convertir  |  F11 = pantalla completa"
+            value="Listo.  |  Ctrl+P = preview  |  Ctrl+Enter = convertir  |  "
+                  "Ctrl+Z/Y = deshacer/rehacer  |  F11 = pantalla completa"
         )
         tk.Label(
             self, textvariable=self.status_var,
             font=("Segoe UI", 8), fg=TXS, bg=BG0, anchor="w", padx=12
-        ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        ).grid(row=1, column=0, sticky="ew", pady=(0, 6))
 
         self._apply_styles()
-        # Fijar ancho mínimo del panel izq y minsize de ventana tras layout inicial
+        # Posición inicial del divisor y minsize de ventana tras layout inicial
         self.after_idle(self._lock_left_width)
 
     def _lock_left_width(self):
         self.update_idletasks()
         lw = self._left_inner.winfo_reqwidth() + 20   # ancho natural + scrollbar
         self._left_canvas.configure(width=lw)
-        self.columnconfigure(0, weight=0, minsize=lw)
+        self._left_min_width = lw + 24
+        try:
+            self._main_pane.sashpos(0, self._left_min_width)
+        except tk.TclError:
+            pass
         self.minsize(lw + SOURCE_PREV_W // 2, 560)
+
+    def _enforce_min_left_pane(self, _event=None):
+        # Debounced like the other resize handlers below — this fires on
+        # every <Configure> of left_outer, which happens continuously while
+        # the window is being live-resized, so doing the sashpos() check
+        # synchronously on each one adds unnecessary work during the drag.
+        if self._enforce_min_pane_after:
+            self.after_cancel(self._enforce_min_pane_after)
+        self._enforce_min_pane_after = self.after(150, self._do_enforce_min_left_pane)
+
+    def _do_enforce_min_left_pane(self):
+        self._enforce_min_pane_after = None
+        # ttk.PanedWindow has no per-pane minsize option, so the sash can be
+        # dragged past the left panel's natural content width, clipping it
+        # (no horizontal scrollbar exists). Snap it back if that happens.
+        lw = getattr(self, "_left_min_width", None)
+        if lw is None:
+            return
+        try:
+            if self._main_pane.sashpos(0) < lw:
+                self._main_pane.sashpos(0, lw)
+        except tk.TclError:
+            pass
 
     # ── Helpers de UI ─────────────────────────────────────────────────────────
 
-    def _card(self, parent, title: str, accent=ACC) -> tk.Frame:
-        lf = tk.LabelFrame(
-            parent, text=f"  {title}  ",
-            font=("Segoe UI", 9, "bold"),
-            fg=accent, bg=BG1, bd=1, relief="solid", labelanchor="nw"
-        )
-        lf.pack(fill="x", pady=(0, 8))
+    def _card(self, parent, title: str, accent=ACC, collapsible=False, start_open=True,
+              build_fn=None) -> tk.Frame:
+        """build_fn, si se pasa, recibe `inner` y arma su contenido recién la
+        primera vez que la card se abre — para cards que empiezan cerradas y
+        rara vez se usan, evita construir sus widgets (y su costo de layout)
+        en cada arranque si el usuario nunca las despliega. Sin build_fn, el
+        contenido se arma de una (como antes): el caller llena `inner` él
+        mismo apenas _card() retorna."""
+        lf = tk.LabelFrame(parent, bg=BG1, bd=1, relief="solid")
         inner = tk.Frame(lf, bg=BG1)
-        inner.pack(fill="x", padx=10, pady=8)
+        built = {"done": False}
+
+        def _ensure_built():
+            if not built["done"]:
+                built["done"] = True
+                if build_fn is not None:
+                    build_fn(inner)
+
+        if collapsible:
+            hdr = tk.Frame(lf, bg=BG1, cursor="hand2")
+            state = {"open": start_open}
+            arrow = tk.Label(hdr, text=("▾" if start_open else "▸"),
+                              font=("Segoe UI", 9, "bold"), fg=accent, bg=BG1, cursor="hand2")
+            arrow.pack(side="left")
+            tk.Label(hdr, text=f" {title}  ", font=("Segoe UI", 9, "bold"),
+                     fg=accent, bg=BG1, cursor="hand2").pack(side="left")
+            lf.configure(labelwidget=hdr)
+            if start_open:
+                _ensure_built()
+                inner.pack(fill="x", padx=10, pady=8)
+
+            def _toggle(_=None):
+                if state["open"]:
+                    inner.pack_forget()
+                    arrow.config(text="▸")
+                else:
+                    _ensure_built()
+                    inner.pack(fill="x", padx=10, pady=8)
+                    arrow.config(text="▾")
+                state["open"] = not state["open"]
+
+            hdr.bind("<Button-1>", _toggle)
+            for child in hdr.winfo_children():
+                child.bind("<Button-1>", _toggle)
+        else:
+            lf.configure(text=f"  {title}  ", font=("Segoe UI", 9, "bold"),
+                         fg=accent, labelanchor="nw")
+            inner.pack(fill="x", padx=10, pady=8)
+            _ensure_built()
+
+        lf.pack(fill="x", pady=(0, 8))
         return inner
 
     def _btn(self, parent, text, cmd, bg=BG2, fg=TXP, width=None):
@@ -136,6 +212,28 @@ class UIBuilderMixin:
         r.pack(fill="x", pady=pady)
         return r
 
+    def _add_tooltip(self, widget, text):
+        tip = {"win": None}
+
+        def _show(event):
+            tw = tk.Toplevel(widget)
+            tip["win"] = tw
+            tw.wm_overrideredirect(True)
+            tw.wm_geometry(f"+{event.x_root + 12}+{event.y_root + 12}")
+            tk.Label(
+                tw, text=text, bg="#1c2128", fg=TXP,
+                font=("Segoe UI", 8), relief="solid", bd=1, padx=6, pady=3
+            ).pack()
+
+        def _hide(_event=None):
+            if tip["win"] is not None:
+                tip["win"].destroy()
+                tip["win"] = None
+
+        widget.bind("<Enter>", _show, add="+")
+        widget.bind("<Leave>", _hide, add="+")
+        widget.bind("<Button-1>", _hide, add="+")
+
     # ── Header ────────────────────────────────────────────────────────────────
 
     def _build_header(self, parent):
@@ -167,7 +265,7 @@ class UIBuilderMixin:
     # ── Archivos ──────────────────────────────────────────────────────────────
 
     def _build_files_card(self, parent):
-        p = self._card(parent, "📁  Archivos")
+        p = self._card(parent, "📁  Archivos", collapsible=True)
 
         def _row_file(label, var, browse_cmd):
             r = self._row(p)
@@ -182,8 +280,10 @@ class UIBuilderMixin:
         self._lbl(r2, "Fuente 2:", w=10).pack(side="left")
         ttk.Entry(r2, textvariable=self.src_path2, width=34).pack(side="left", padx=(4, 4))
         self._btn(r2, "…", self._browse_source2, width=3).pack(side="left", padx=(0, 4))
-        self._btn(r2, "✕", lambda: self.src_path2.set(""), width=3,
-                  bg="#3d1f1f", fg=RED).pack(side="left", padx=(0, 8))
+        _clear_src2_btn = self._btn(r2, "✕", lambda: self.src_path2.set(""), width=3,
+                  bg="#3d1f1f", fg=RED)
+        _clear_src2_btn.pack(side="left", padx=(0, 8))
+        self._add_tooltip(_clear_src2_btn, "Quitar Fuente 2")
         self._btn(r2, "⇅ Swap capas", self._swap_sources,
                   bg="#2a1f3d", fg="#c084fc").pack(side="left", padx=(0, 4))
         self._btn(r2, "🖼 Galería", self._open_asset_gallery,
@@ -211,7 +311,7 @@ class UIBuilderMixin:
     # ── Transformaciones ──────────────────────────────────────────────────────
 
     def _build_transform_card(self, parent):
-        p = self._card(parent, "🔄  Transformaciones")
+        p = self._card(parent, "🔄  Transformaciones", collapsible=True)
         r = self._row(p)
         self._lbl(r, "Rotación:", w=10).pack(side="left")
         for deg in [0, 90, 180, 270]:
@@ -228,7 +328,7 @@ class UIBuilderMixin:
     # ── Ajustes de imagen ─────────────────────────────────────────────────────
 
     def _build_adjust_card(self, parent):
-        p = self._card(parent, "🎨  Ajustes de imagen")
+        p = self._card(parent, "🎨  Ajustes de imagen", collapsible=True)
 
         def _srow(label, var, from_, to):
             r = self._row(p, pady=1)
@@ -255,11 +355,70 @@ class UIBuilderMixin:
         self._repl_btn = self._btn(r2, "Reemplazos (0)", self._show_replacements_popup, bg=BG2, fg=TXS)
         self._repl_btn.pack(side="left", padx=(0, 4))
 
+    # ── Feature 9: zona de tono ──────────────────────────────────────────────
+
+    def _build_hue_zone_card(self, parent):
+        # Empieza cerrada y no tiene ningún widget referenciado desde afuera
+        # (a diferencia de las otras cards) — se arma recién al abrirla la
+        # primera vez, así no suma su costo de layout en cada arranque para
+        # quien nunca la usa.
+        self._card(parent, "🎯  Zona de tono", collapsible=True, start_open=False,
+                   build_fn=self._populate_hue_zone_card)
+
+    def _populate_hue_zone_card(self, p):
+        r = self._row(p)
+        self._chk(r, "Activar", self.hue_zone_enabled_var,
+                  cmd=self._refresh_text_preview).pack(side="left", padx=(0, 12))
+        self._lbl(r, "Forma:", fg=TXS).pack(side="left")
+        for lbl, val in [("🫧 Burbuja", "circle"), ("▭ Rectángulo", "rect")]:
+            tk.Radiobutton(
+                r, text=lbl, variable=self.hue_zone_shape_var, value=val,
+                font=("Segoe UI", 9), fg=TXP, bg=BG1,
+                selectcolor=BG2, activebackground=BG1, cursor="hand2",
+                command=self._refresh_text_preview
+            ).pack(side="left", padx=(4, 0))
+
+        r_inv = self._row(p, pady=(2, 0))
+        self._chk(r_inv, "Invertir (afectar afuera de la forma)", self.hue_zone_invert_var,
+                  cmd=self._refresh_text_preview).pack(side="left")
+
+        r2 = self._row(p, pady=(4, 2))
+        self._lbl(r2, "Tono (hue):", w=12).pack(side="left")
+        self._scale(r2, self.hue_zone_hue_var, -180, 180, length=180, res=1).pack(side="left", padx=(4, 0))
+        self._lbl(r2, "°").pack(side="left", padx=(2, 0))
+
+        r3 = self._row(p, pady=(4, 0))
+        self._btn(r3, "↺ Reset zona", self._reset_hue_zone, bg=BG2, fg=TXS).pack(side="left")
+        self._lbl(r3, "  arrastrá la forma en la vista previa para moverla · el punto en la esquina la agranda/achica",
+                  fg=TXS).pack(side="left")
+
     # ── Texto / Iniciales ─────────────────────────────────────────────────────
 
     def _build_text_card(self, parent):
         p = self._card(parent, "✏️  Texto / Iniciales")
 
+        nb = ttk.Notebook(p)
+        nb.pack(fill="x")
+        tab_content  = tk.Frame(nb, bg=BG1)
+        tab_color    = tk.Frame(nb, bg=BG1)
+        tab_effects  = tk.Frame(nb, bg=BG1)
+        tab_position = tk.Frame(nb, bg=BG1)
+        for tab, label in [
+            (tab_content, "Contenido"), (tab_color, "Color"),
+            (tab_effects, "Efectos"), (tab_position, "Posición"),
+        ]:
+            tab.pack_propagate(True)
+            nb.add(tab, text=label)
+
+        self._build_text_content_tab(tab_content)
+        self._build_text_color_tab(tab_color)
+        self._build_text_effects_tab(tab_effects)
+        self._build_text_position_tab(tab_position)
+
+        # Initialize font preview
+        self.after_idle(self._update_font_preview)
+
+    def _build_text_content_tab(self, p):
         # ── Modo single-font (default) ────────────────────────────────────
         self._single_font_section = tk.Frame(p, bg=BG1)
         self._single_font_section.pack(fill="x")
@@ -300,7 +459,9 @@ class UIBuilderMixin:
         self.font_combo.pack(side="left", padx=(4, 4))
         self.font_combo.bind("<<ComboboxSelected>>", self._on_font_selected)
         self.font_combo.bind("<KeyRelease>", self._filter_fonts)
-        self._btn(r, "🔤", self._open_font_picker, bg=BG2, fg=AC2, width=3).pack(side="left", padx=(0, 6))
+        _fp_btn = self._btn(r, "🔤", self._open_font_picker, bg=BG2, fg=AC2, width=3)
+        _fp_btn.pack(side="left", padx=(0, 6))
+        self._add_tooltip(_fp_btn, "Buscar fuentes (ventana completa con vista previa)")
         self._lbl(r, f"({len(self.font_names)})").pack(side="left")
 
         # Font preview label
@@ -333,8 +494,10 @@ class UIBuilderMixin:
                 values=self.font_names, state="readonly", width=14,
                 font=("Segoe UI", 8)
             ).pack(pady=(0, 2), padx=4)
-            self._btn(col, "🔤", lambda idx=i: self._open_font_picker_slot(idx),
-                      bg=BG1, fg=AC2).pack(pady=(2, 4))
+            _mf_fp_btn = self._btn(col, "🔤", lambda idx=i: self._open_font_picker_slot(idx),
+                      bg=BG1, fg=AC2)
+            _mf_fp_btn.pack(pady=(2, 4))
+            self._add_tooltip(_mf_fp_btn, f"Elegir fuente para la letra {i+1}")
             sz_row = tk.Frame(col, bg=BG2)
             sz_row.pack(pady=(0, 2))
             self._lbl(sz_row, "Tam:", fg=TXS).pack(side="left")
@@ -361,6 +524,7 @@ class UIBuilderMixin:
             self.mf_sizes[i].trace_add("write",     self._refresh_text_preview_debounced)
             self.mf_offsets_y[i].trace_add("write", self._refresh_text_preview_debounced)
 
+    def _build_text_color_tab(self, p):
         # Color + cursiva
         r = self._row(p, pady=4)
         self._lbl(r, "Color texto:", w=12).pack(side="left")
@@ -383,6 +547,65 @@ class UIBuilderMixin:
         self._lbl(r_auto, "  analiza color/contraste de la imagen y ajusta texto+contorno+sombra",
                   fg=TXS).pack(side="left")
 
+        ttk.Separator(p, orient="horizontal").pack(fill="x", pady=(6, 4))
+
+        # ── Degradado de texto ────────────────────────────────────────────────
+        r = self._row(p, pady=(0, 2))
+        self._chk(r, "Degradado", self.text_gradient_var,
+                  cmd=self._refresh_text_preview).pack(side="left", padx=(0, 8))
+        self._grad_btn1 = tk.Button(
+            r, text="  ", width=3, bg=self._gradient_color1,
+            relief="flat", cursor="hand2", font=("Segoe UI", 8),
+            command=self._pick_gradient_color1
+        )
+        self._grad_btn1.pack(side="left", padx=(0, 2))
+        self._add_tooltip(self._grad_btn1, "Color inicial del degradado")
+        tk.Label(r, text="→", font=("Segoe UI", 10), fg=TXS, bg=BG1).pack(side="left", padx=2)
+        self._grad_btn2 = tk.Button(
+            r, text="  ", width=3, bg=self._gradient_color2,
+            relief="flat", cursor="hand2", font=("Segoe UI", 8),
+            command=self._pick_gradient_color2
+        )
+        self._grad_btn2.pack(side="left", padx=(0, 10))
+        self._add_tooltip(self._grad_btn2, "Color final del degradado")
+        self._lbl(r, "Dir:").pack(side="left")
+        ttk.Combobox(
+            r, textvariable=self.gradient_dir_var,
+            values=["vertical", "horizontal", "diagonal ↘", "diagonal ↗", "radial"],
+            state="readonly", width=12,
+            font=("Segoe UI", 9)
+        ).pack(side="left", padx=(4, 0))
+        self.gradient_dir_var.trace_add("write", lambda *_: self._refresh_text_preview())
+
+        # Quick gradient presets
+        r2 = self._row(p, pady=(2, 0))
+        self._lbl(r2, "Estilos:", w=12).pack(side="left")
+        for label, c1, c2 in [
+            ("⚜ Dorado",   "#ffe680", "#7b3000"),
+            ("🔥 Fuego",   "#ff6600", "#cc0000"),
+            ("❄ Hielo",    "#e0f4ff", "#2266aa"),
+            ("🌑 Sombra",  "#ffffff", "#333333"),
+        ]:
+            self._btn(r2, label, lambda a=c1, b=c2: self._apply_gradient_preset(a, b),
+                      bg=BG2, fg=TXS).pack(side="left", padx=(0, 3))
+        self._btn(r2, "🎯 Auto", self._auto_gradient_color,
+                  bg=BG2, fg=ACC).pack(side="left", padx=(8, 0))
+
+        ttk.Separator(p, orient="horizontal").pack(fill="x", pady=(6, 4))
+
+        # ── Color del contorno ────────────────────────────────────────────────
+        r3 = self._row(p, pady=(0, 4))
+        self._lbl(r3, "Color contorno:", w=14).pack(side="left")
+        self._outline_color_btn = tk.Button(
+            r3, text="Auto", width=6,
+            bg=BG2, fg=TXS,
+            relief="flat", cursor="hand2", font=("Segoe UI", 8),
+            command=self._pick_outline_color
+        )
+        self._outline_color_btn.pack(side="left", padx=(4, 6))
+        self._btn(r3, "✕ Reset", self._reset_outline_color, bg=BG2, fg=TXS).pack(side="left")
+
+    def _build_text_effects_tab(self, p):
         # Espaciado
         r = self._row(p)
         self._lbl(r, "Espaciado:", w=12).pack(side="left")
@@ -423,81 +646,29 @@ class UIBuilderMixin:
         )
         self._shadow_btn.pack(side="left", padx=4)
 
-        # Snap positions
+    def _build_text_position_tab(self, p):
         r = self._row(p, pady=(6, 0))
         self._lbl(r, "Posición:", w=12).pack(side="left")
         grid = tk.Frame(r, bg=BG1)
         grid.pack(side="left", padx=4)
+        anchor_names = {
+            "nw": "Arriba-izquierda", "n": "Arriba-centro", "ne": "Arriba-derecha",
+            "w": "Centro-izquierda", "c": "Centro", "e": "Centro-derecha",
+            "sw": "Abajo-izquierda", "s": "Abajo-centro", "se": "Abajo-derecha",
+        }
         for i, (sym, anchor) in enumerate([
             ("↖","nw"),("↑","n"),("↗","ne"),
             ("←","w"), ("⊙","c"),("→","e"),
             ("↙","sw"),("↓","s"),("↘","se"),
         ]):
-            tk.Button(
+            _pos_btn = tk.Button(
                 grid, text=sym, width=2,
                 bg=BG2, fg=TXP, relief="flat", cursor="hand2",
                 font=("Segoe UI", 9),
                 command=lambda a=anchor: self._snap_text_pos(a)
-            ).grid(row=i//3, column=i%3, padx=1, pady=1)
-
-        ttk.Separator(p, orient="horizontal").pack(fill="x", pady=(8, 4))
-
-        # ── Degradado de texto ────────────────────────────────────────────────
-        r = self._row(p, pady=(0, 2))
-        self._chk(r, "Degradado", self.text_gradient_var,
-                  cmd=self._refresh_text_preview).pack(side="left", padx=(0, 8))
-        self._grad_btn1 = tk.Button(
-            r, text="  ", width=3, bg=self._gradient_color1,
-            relief="flat", cursor="hand2", font=("Segoe UI", 8),
-            command=self._pick_gradient_color1
-        )
-        self._grad_btn1.pack(side="left", padx=(0, 2))
-        tk.Label(r, text="→", font=("Segoe UI", 10), fg=TXS, bg=BG1).pack(side="left", padx=2)
-        self._grad_btn2 = tk.Button(
-            r, text="  ", width=3, bg=self._gradient_color2,
-            relief="flat", cursor="hand2", font=("Segoe UI", 8),
-            command=self._pick_gradient_color2
-        )
-        self._grad_btn2.pack(side="left", padx=(0, 10))
-        self._lbl(r, "Dir:").pack(side="left")
-        ttk.Combobox(
-            r, textvariable=self.gradient_dir_var,
-            values=["vertical", "horizontal", "diagonal ↘", "diagonal ↗", "radial"],
-            state="readonly", width=12,
-            font=("Segoe UI", 9)
-        ).pack(side="left", padx=(4, 0))
-        self.gradient_dir_var.trace_add("write", lambda *_: self._refresh_text_preview())
-
-        # Quick gradient presets
-        r2 = self._row(p, pady=(2, 0))
-        self._lbl(r2, "Estilos:", w=12).pack(side="left")
-        for label, c1, c2 in [
-            ("⚜ Dorado",   "#ffe680", "#7b3000"),
-            ("🔥 Fuego",   "#ff6600", "#cc0000"),
-            ("❄ Hielo",    "#e0f4ff", "#2266aa"),
-            ("🌑 Sombra",  "#ffffff", "#333333"),
-        ]:
-            self._btn(r2, label, lambda a=c1, b=c2: self._apply_gradient_preset(a, b),
-                      bg=BG2, fg=TXS).pack(side="left", padx=(0, 3))
-        self._btn(r2, "🎯 Auto", self._auto_gradient_color,
-                  bg=BG2, fg=ACC).pack(side="left", padx=(8, 0))
-
-        ttk.Separator(p, orient="horizontal").pack(fill="x", pady=(6, 4))
-
-        # ── Color del contorno ────────────────────────────────────────────────
-        r3 = self._row(p, pady=(0, 4))
-        self._lbl(r3, "Color contorno:", w=14).pack(side="left")
-        self._outline_color_btn = tk.Button(
-            r3, text="Auto", width=6,
-            bg=BG2, fg=TXS,
-            relief="flat", cursor="hand2", font=("Segoe UI", 8),
-            command=self._pick_outline_color
-        )
-        self._outline_color_btn.pack(side="left", padx=(4, 6))
-        self._btn(r3, "✕ Reset", self._reset_outline_color, bg=BG2, fg=TXS).pack(side="left")
-
-        # Initialize font preview
-        self.after_idle(self._update_font_preview)
+            )
+            _pos_btn.grid(row=i//3, column=i%3, padx=1, pady=1)
+            self._add_tooltip(_pos_btn, anchor_names[anchor])
 
     # ── Presets ───────────────────────────────────────────────────────────────
 
@@ -593,8 +764,9 @@ class UIBuilderMixin:
             text="Cargá una imagen para ver las zonas de recorte",
             fill="#3a3a6e", font=("Segoe UI", 10)
         )
-        self.src_canvas.bind("<Button-1>", self._text_drag_start)
-        self.src_canvas.bind("<B1-Motion>", self._text_drag_move)
+        self.src_canvas.bind("<Button-1>", self._on_canvas_button1)
+        self.src_canvas.bind("<B1-Motion>", self._on_canvas_motion1)
+        self.src_canvas.bind("<ButtonRelease-1>", self._on_canvas_release1)
         self.src_canvas.bind("<Shift-Button-1>", self._pick_color_from_image)
         self.src_canvas.bind("<Control-Button-1>", self._start_color_replace)
         self.src_canvas.bind("<Button-3>", self._split_drag_start)
@@ -605,6 +777,11 @@ class UIBuilderMixin:
         self.src_canvas.bind("<Right>", lambda e: self._nudge_text( 0.01, 0.0))
         self.src_canvas.bind("<Up>",    lambda e: self._nudge_text( 0.0, -0.01))
         self.src_canvas.bind("<Down>",  lambda e: self._nudge_text( 0.0,  0.01))
+        self._add_tooltip(
+            self.src_canvas,
+            "Arrastrar = mover texto  ·  Shift+click = tomar color\n"
+            "Ctrl+click = reemplazar color  ·  Clic-derecho = mover split"
+        )
         self.src_canvas.focus_set()
         if _HAS_DND:
             self.src_canvas.drop_target_register(_DND_FILES)
@@ -629,8 +806,8 @@ class UIBuilderMixin:
                 cursor="hand2", command=self._apply_preview_bg
             ).pack(side="left", padx=3)
 
-        frames_row = tk.Frame(parent, bg=BG0)
-        frames_row.pack()
+        self._results_frame = frames_row = tk.Frame(parent, bg=BG0)
+        frames_row.pack(fill="both", expand=True)
 
         ally_lf = tk.LabelFrame(
             frames_row, text=" Alliance (8×12) ",
@@ -641,10 +818,11 @@ class UIBuilderMixin:
             ally_lf,
             width=ALLY_SIZE[0] * PREVIEW_MULT,
             height=ALLY_SIZE[1] * PREVIEW_MULT,
-            bg="black", highlightthickness=0
+            bg="black", highlightthickness=0, cursor="hand2"
         )
         self.ally_canvas.pack(padx=6, pady=6)
         self.ally_canvas.bind("<Button-1>", lambda _: self._show_zoom_popup("ally"))
+        self._add_tooltip(self.ally_canvas, "Click para zoom")
 
         clan_lf = tk.LabelFrame(
             frames_row, text=" Clan (16×12) ",
@@ -655,10 +833,13 @@ class UIBuilderMixin:
             clan_lf,
             width=CLAN_SIZE[0] * PREVIEW_MULT,
             height=CLAN_SIZE[1] * PREVIEW_MULT,
-            bg="black", highlightthickness=0
+            bg="black", highlightthickness=0, cursor="hand2"
         )
         self.clan_canvas.pack(padx=6, pady=6)
         self.clan_canvas.bind("<Button-1>", lambda _: self._show_zoom_popup("clan"))
+        self._add_tooltip(self.clan_canvas, "Click para zoom")
+
+        frames_row.bind("<Configure>", self._on_results_resize)
 
         r_pal = tk.Frame(parent, bg=BG0)
         r_pal.pack(anchor="w", pady=(8, 0))
@@ -682,6 +863,13 @@ class UIBuilderMixin:
                   fieldbackground=[("readonly", BG2)],
                   foreground=[("readonly", TXP)])
         style.configure("TSeparator", background="#30363d")
+        style.configure("TNotebook", background=BG1, borderwidth=0)
+        style.configure("TNotebook.Tab",
+                        background=BG2, foreground=TXS,
+                        padding=(10, 4), font=("Segoe UI", 9))
+        style.map("TNotebook.Tab",
+                  background=[("selected", BG1)],
+                  foreground=[("selected", ACC)])
 
     # ── Pantalla completa ─────────────────────────────────────────────────────
 
@@ -715,3 +903,27 @@ class UIBuilderMixin:
         src = self.src_path.get().strip()
         if src and os.path.isfile(src):
             self._update_source_preview(src)
+
+    def _on_results_resize(self, event):
+        if self._results_resize_after:
+            self.after_cancel(self._results_resize_after)
+        self._results_resize_after = self.after(
+            150, self._do_results_resize, event.width, event.height
+        )
+
+    def _do_results_resize(self, w, h):
+        self._results_resize_after = None
+        # padding/gap allowance around the two LabelFrames (borders + padx/pady)
+        avail_w = max(0, w - 40)
+        avail_h = max(0, h - 20)
+        if avail_w < 20 or avail_h < 20:
+            return
+        mult = max(6, min(60, min(avail_w / COMBINED_W, avail_h / ALLY_SIZE[1])))
+        if abs(mult - self._result_disp_mult) < 0.5:
+            return
+        self._result_disp_mult = mult
+        self.ally_canvas.config(
+            width=int(ALLY_SIZE[0] * mult), height=int(ALLY_SIZE[1] * mult))
+        self.clan_canvas.config(
+            width=int(CLAN_SIZE[0] * mult), height=int(CLAN_SIZE[1] * mult))
+        self._redraw_result_canvases()

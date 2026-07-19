@@ -38,6 +38,33 @@ def test_import_preset_merges_into_existing_presets(app, tmp_path, monkeypatch):
     assert "DelClan" in app.preset_combo["values"]
 
 
+def test_hue_zone_state_round_trips_through_get_and_apply_settings(app):
+    app.hue_zone_enabled_var.set(True)
+    app.hue_zone_shape_var.set("rect")
+    app.hue_zone_invert_var.set(True)
+    app.hue_zone_hue_var.set(90)
+    app._hue_zone_center = (0.3, 0.7)
+    app._hue_zone_size = (0.2, 0.1)
+
+    settings = app._get_current_settings()
+
+    app.hue_zone_enabled_var.set(False)
+    app.hue_zone_shape_var.set("circle")
+    app.hue_zone_invert_var.set(False)
+    app.hue_zone_hue_var.set(0)
+    app._hue_zone_center = (0.5, 0.5)
+    app._hue_zone_size = (0.15, 0.15)
+
+    app._apply_settings(settings)
+
+    assert app.hue_zone_enabled_var.get() is True
+    assert app.hue_zone_shape_var.get() == "rect"
+    assert app.hue_zone_invert_var.get() is True
+    assert app.hue_zone_hue_var.get() == 90
+    assert app._hue_zone_center == (0.3, 0.7)
+    assert app._hue_zone_size == (0.2, 0.1)
+
+
 def test_import_preset_rejects_invalid_file(app, tmp_path, monkeypatch):
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")

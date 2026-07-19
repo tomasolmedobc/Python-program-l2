@@ -46,6 +46,18 @@
     2,
     0
   ],
+  "hue_zone_enabled": false,
+  "hue_zone_shape": "circle",
+  "hue_zone_invert": false,
+  "hue_zone_hue": 0,
+  "hue_zone_center": [
+    0.5,
+    0.5
+  ],
+  "hue_zone_size": [
+    0.15,
+    0.15
+  ],
   "src_path": "F:/Organizado/Lisas/Crz22pg.jpg",
   "src_path2": "",
   "clan_path": "E:\\L2CyA\\Crz22pg_clan.bmp",

@@ -166,6 +166,7 @@ class FilesMixin:
         self._btn(btn_row, "📂 Abrir carpeta Plantillas",
                   lambda: os.startfile(_core.TEMPLATES_DIR), bg=BG2, fg=TXS).pack(side="left")
         dlg.protocol("WM_DELETE_WINDOW", on_close)
+        dlg.bind("<Escape>", lambda _: on_close())
         self._refresh_text_preview()
 
     def _browse_game_path(self):

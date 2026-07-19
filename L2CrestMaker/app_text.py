@@ -621,6 +621,7 @@ class TextMixin:
         canvas.bind("<MouseWheel>", on_scroll)
         vsb.config(command=lambda *a: [canvas.yview(*a), render_visible()])
         dlg.protocol("WM_DELETE_WINDOW", on_close)
+        dlg.bind("<Escape>", lambda _: on_close())
 
         # ── Construir lista inicial y centrar en fuente seleccionada ───────
         rebuild(list(self.font_names))
