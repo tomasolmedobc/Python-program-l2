@@ -1,0 +1,22 @@
+{
+  "name": "lineage2-raidboss-bot",
+  "version": "1.0.0",
+  "description": "Bot de Discord para trackear Epic Raid Bosses en Lineage 2 Chronicle 4",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "deploy-commands": "node deploy-commands.js"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "mongoose": "^8.9.5",
+    "dotenv": "^16.4.7",
+    "node-cron": "^3.0.3"
+  },
+  "license": "MIT"
+}

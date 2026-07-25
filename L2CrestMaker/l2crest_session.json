@@ -1,67 +1,67 @@
 {
-  "text": "",
-  "text_size": 91,
+  "text": "LC",
+  "text_size": 72,
   "text_pos": [
-    0.5,
-    0.5
+    0.7041666666666667,
+    0.4166666666666667
   ],
-  "text_spacing": 13,
+  "text_spacing": 19,
   "italic": false,
   "bold": true,
   "text_color": "#ffffff",
-  "font": "Impact",
-  "shadow": false,
+  "font": "Russo One",
+  "shadow": true,
   "shadow_x": 1,
-  "shadow_y": 0,
+  "shadow_y": 1,
   "shadow_color": "#000000",
-  "brightness": 1.0,
+  "brightness": 1.05,
   "contrast": 1.0,
-  "saturation": 1.0,
-  "hue": -121,
-  "sharpen": false,
+  "saturation": 0.8,
+  "hue": 83,
+  "sharpen": true,
   "rotation": 0,
   "flip_h": false,
   "flip_v": false,
-  "text_outline": 3,
+  "text_outline": 8,
   "text_opacity": 100,
   "text_rotation": 0,
   "multi_font": false,
   "mf_chars": [
     "L",
     "C",
-    "D"
+    ""
   ],
   "mf_fonts": [
-    "Gadugi Bold",
-    "Faster Stroker",
-    "Georgia Bold Italic"
+    "Verdana Bold",
+    "Verdana Bold",
+    "Verdana Bold"
   ],
   "mf_sizes": [
-    65,
-    63,
+    60,
+    60,
     60
   ],
   "mf_offsets_y": [
-    3,
-    2,
-    0
+    0,
+    0,
+    30
   ],
   "hue_zone_enabled": false,
-  "hue_zone_shape": "circle",
+  "hue_zone_shape": "rect",
   "hue_zone_invert": false,
-  "hue_zone_hue": 0,
+  "hue_zone_hue": 50,
   "hue_zone_center": [
-    0.5,
-    0.5
+    0.7008196721311475,
+    0.45901639344262296
   ],
   "hue_zone_size": [
-    0.15,
-    0.15
+    0.29918032786885246,
+    0.5409836065573771
   ],
-  "src_path": "F:/Organizado/Lisas/Crz22pg.jpg",
+  "src_path": "D:/Crest Clanes/CrestClan/Lisas/Roja09.jpg",
   "src_path2": "",
-  "clan_path": "E:\\L2CyA\\Crz22pg_clan.bmp",
-  "ally_path": "E:\\L2CyA\\Crz22pg_ally.bmp",
+  "clan_path": "E:\\L2CyA\\Roja09_clan.bmp",
+  "ally_path": "E:\\L2CyA\\Roja09_ally.bmp",
   "game_path": "",
   "dither": true
 }
